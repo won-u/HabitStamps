@@ -1,0 +1,10 @@
+{
+  "name": "habit-tracker",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "scripts": {
+    "backend:dev": "pnpm --filter @habit-tracker/backend dev",
+    "backend:migrate": "pnpm --filter @habit-tracker/backend db:migrate",
+    "mobile:start": "pnpm --filter @habit-tracker/mobile start"
+  }
+}

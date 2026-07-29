@@ -1,0 +1,18 @@
+node_modules/
+.pnpm-store/
+dist/
+build/
+.expo/
+.expo-shared/
+*.log
+
+# Backend
+apps/backend/.env
+
+# Mobile
+apps/mobile/.env
+apps/mobile/ios/
+apps/mobile/android/
+
+# OS
+.DS_Store
