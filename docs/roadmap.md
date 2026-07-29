@@ -15,10 +15,14 @@
 - Noto Sans KR 폰트, 컬러 톤 정제, 데님/데님자켓 아이콘 추가.
 - 캘린더 탭에 년/월 선택 모달(헤더 탭으로 특정 년/월 바로 이동) + 현재 월 기준 활성 습관별 체크인 카운트 목록 추가.
 - 습관 보관(archive)/복구 기능: 수정 화면의 "보관하기" 버튼, 설정 > 관리 > 보관된 습관 화면(복구), 기존 `HabitRepository`의 `includeArchived` 필터를 그대로 재사용해 화면별 추가 필터링 없이 구현.
+- iCloud(CloudKit) 동기화를 시도했다가 제거함 — CloudKit은 유료 Apple Developer Program 가입이 있어야만 컨테이너를 만들 수 있는데 가입 계획이 없어, 영구히 실행 불가능한 코드를 남겨두지 않기 위해 걷어냄(`CloudKitSyncGateway`/`expo-cloudkit` 의존성/설정 전부 삭제). 히스토리는 [architecture.md](./architecture.md) §5-0 참고.
+- **Supabase 동기화**를 REST 백엔드와 병행하는 세 번째 `SyncGateway`로 추가(`SupabaseSyncGateway`, Postgres+Auth+RLS, Google 로그인) — CloudKit과 달리 iOS/Android/Web 어디서든 동작해 원래 목표(Android/Web 확장)에 더 잘 맞는다. 설계는 [architecture.md](./architecture.md) §5 참고. 스키마·RLS·LWW 충돌 해소 로직은 로컬 Postgres에 `auth.uid()` 스텁을 만들어 6가지 시나리오로 **실제 실행 검증**했고(CloudKit 때보다 강한 검증), Android 에뮬레이터에서 새 의존성 추가로 인한 회귀가 없음과 REST 동기화가 여전히 동작함을 확인했다. **실제 Supabase 프로젝트 연동(로그인 왕복, 두 기기 간 동기화)은 사용자가 프로젝트를 만들어야 확인 가능**(§5-4).
 
 **아직 안 한 것 (v1 원래 범위 중 잔여)**: 체크인 메모 입력 UI, Journal 화면, 리마인더/알림 스케줄링 연결, 데이터 백업/복원, 온보딩, 습관 순서 드래그 정렬, iOS 실기기/시뮬레이터 재검증(현재까지 전부 Android 에뮬레이터 기준).
 
 **다음에 정리하면 좋을 것**: 통계 탭과 리포트 화면 경로 통합([ux-design.md](./ux-design.md) §7).
+
+**사용자 액션 대기 중**: Supabase 동기화를 실제로 켜서 쓰려면 (1) supabase.com에서 무료 프로젝트 생성, (2) `docs/supabase-schema.sql`을 SQL Editor에서 실행, (3) Google OAuth Provider 설정(Google Cloud Console에서 클라이언트 발급), (4) 앱 설정에 프로젝트 URL/anon key 입력 후 로그인이 필요하다(architecture.md §5-4). 이 개발 환경에는 브라우저 기반 Google 계정 설정을 사용자 대신 진행할 수단이 없어 사용자가 직접 해야 한다.
 
 ## 구현 단계
 
@@ -27,8 +31,9 @@
 3. ✅ **핵심 UI 루프**: 오늘 화면(체크인 애니메이션 포함) → 습관 추가/수정 폼 → 캘린더 뷰. 이 시점에 로컬 전용으로 "매일 쓸 수 있는" 앱이 완성됨. *(온보딩은 미구현으로 남음)*
 4. **통계/Journal/설정/알림**: 통계 요약 화면과 설정 화면은 ✅ 완료. Journal 세그먼트·알림 스케줄링(`expo-notifications`)·데이터 백업/복원은 ❌ 아직 미구현.
 5. ✅ **백엔드 모듈**: `apps/backend` 라우트(`/habits`, `/checkins`, `/sync/push`, `/sync/pull`) 구현, Drizzle+Postgres 스키마/마이그레이션, 인증 플러그인(고정 토큰).
-6. ✅ **동기화 연결**: `RestSyncGateway`/`SyncEngine` 구현, 설정 화면에 Developer 섹션 추가, 로컬 검증 절차 수행(architecture.md 4-5) — Android 에뮬레이터 기준 두 클라이언트 간 push/pull 왕복 확인 완료.
+6. ✅ **동기화 연결**: `RestSyncGateway`/`SyncEngine` 구현, 설정 화면에 동기화 섹션 추가, 로컬 검증 절차 수행(architecture.md 4-5) — Android 에뮬레이터 기준 두 클라이언트 간 push/pull 왕복 확인 완료.
 7. ✅ **DayStamps 참조 리디자인 + 기능 확장** (v1.5, 반복 진행): UI/UX 리디자인, 그룹 기능, 반복주기 확장(월 n회), 리포트 화면(Weekly/Monthly/Yearly + 스와이프 + 카운트 + 오늘로 이동 FAB) — 상세는 위 "현재 진행 상황" 참고.
+8. ✅/⏳ **Supabase 동기화 추가**: `SupabaseSyncGateway` + Google 로그인 구현·로직 검증 완료, 실제 프로젝트 연동은 사용자 액션 대기(위 참고).
 
 ## 검증 방법 (End-to-End)
 

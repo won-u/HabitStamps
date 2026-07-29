@@ -1,0 +1,140 @@
+import type { CheckIn, EntityChangeSet, Habit, SyncChangeSet, SyncGateway, SyncPullResult, SyncPushResult } from "@habit-tracker/core";
+import { emptyEntityChangeSet } from "@habit-tracker/core";
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+interface HabitRow {
+  id: string;
+  name: string;
+  icon: string;
+  color: string;
+  category_id: string | null;
+  frequency_type: string;
+  frequency_config: Record<string, unknown>;
+  is_archived: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  deleted_at: string | null;
+}
+
+interface CheckInRow {
+  id: string;
+  habit_id: string;
+  date: string;
+  completed_at: string;
+  note: string | null;
+  photo_uri: string | null;
+  value: number | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  deleted_at: string | null;
+}
+
+function rowToHabit(row: HabitRow): Habit {
+  return {
+    id: row.id,
+    name: row.name,
+    icon: row.icon,
+    color: row.color,
+    categoryId: row.category_id,
+    frequencyType: row.frequency_type as Habit["frequencyType"],
+    frequencyConfig: row.frequency_config as Habit["frequencyConfig"],
+    isArchived: row.is_archived,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    version: row.version,
+    deletedAt: row.deleted_at,
+  };
+}
+
+function rowToCheckIn(row: CheckInRow): CheckIn {
+  return {
+    id: row.id,
+    habitId: row.habit_id,
+    date: row.date,
+    completedAt: row.completed_at,
+    note: row.note,
+    photoUri: row.photo_uri,
+    value: row.value,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    version: row.version,
+    deletedAt: row.deleted_at,
+  };
+}
+
+/**
+ * Syncs via a Supabase project (Postgres + Auth + RLS) instead of
+ * apps/backend — see docs/architecture.md §5. Works identically on
+ * iOS/Android/web (pure JS client, no native module), unlike the CloudKit
+ * path this replaced which was iOS-only.
+ *
+ * The RLS policies in docs/supabase-schema.sql scope every row to
+ * `auth.uid()`, so `pull()`'s plain `.select()` only ever returns the signed-in
+ * user's own rows without this gateway needing to filter by user id itself.
+ *
+ * `push()` calls the `sync_upsert_habits`/`sync_upsert_check_ins` Postgres
+ * RPCs (docs/supabase-schema.sql) rather than a plain `.upsert()` — a plain
+ * upsert has no way to express "only overwrite if the incoming row is
+ * newer", so the LWW comparison (matching the REST backend's policy,
+ * architecture.md §4-3) is done server-side, atomically, in SQL. Each RPC
+ * returns the ids it actually accepted; every other requested id is reported
+ * as a conflict (the next pull() brings down the winning server version).
+ */
+export class SupabaseSyncGateway implements SyncGateway {
+  constructor(private readonly client: SupabaseClient) {}
+
+  async push(changes: SyncChangeSet): Promise<SyncPushResult> {
+    const dirtyHabits = [...changes.habits.created, ...changes.habits.updated];
+    const dirtyCheckIns = [...changes.checkIns.created, ...changes.checkIns.updated];
+    const conflicts: string[] = [];
+
+    if (dirtyHabits.length > 0) {
+      const { data, error } = await this.client.rpc("sync_upsert_habits", { rows: dirtyHabits });
+      if (error) throw error;
+      const accepted = new Set((data ?? []) as string[]);
+      for (const habit of dirtyHabits) if (!accepted.has(habit.id)) conflicts.push(habit.id);
+    }
+
+    if (dirtyCheckIns.length > 0) {
+      const { data, error } = await this.client.rpc("sync_upsert_check_ins", { rows: dirtyCheckIns });
+      if (error) throw error;
+      const accepted = new Set((data ?? []) as string[]);
+      for (const checkIn of dirtyCheckIns) if (!accepted.has(checkIn.id)) conflicts.push(checkIn.id);
+    }
+
+    return { acceptedAt: new Date().toISOString(), conflicts };
+  }
+
+  async pull(sinceIso: string): Promise<SyncPullResult> {
+    const [habitsResult, checkInsResult] = await Promise.all([
+      this.client.from("habits").select("*").gt("updated_at", sinceIso).order("updated_at"),
+      this.client.from("check_ins").select("*").gt("updated_at", sinceIso).order("updated_at"),
+    ]);
+    if (habitsResult.error) throw habitsResult.error;
+    if (checkInsResult.error) throw checkInsResult.error;
+
+    const habits = toEntityChangeSet(habitsResult.data as HabitRow[], rowToHabit);
+    const checkIns = toEntityChangeSet(checkInsResult.data as CheckInRow[], rowToCheckIn);
+
+    return { serverTime: new Date().toISOString(), changes: { habits, checkIns } };
+  }
+}
+
+function toEntityChangeSet<TRow, T extends { id: string; deletedAt: string | null }>(
+  rows: TRow[],
+  fromRow: (row: TRow) => T,
+): EntityChangeSet<T> {
+  const result = emptyEntityChangeSet<T>();
+  for (const row of rows) {
+    const entity = fromRow(row);
+    // Soft-delete tombstones (deletedAt set), mirroring the REST backend
+    // (architecture.md §4-3) — rows are never physically deleted.
+    if (entity.deletedAt) result.deletedIds.push(entity.id);
+    else result.updated.push(entity);
+  }
+  return result;
+}

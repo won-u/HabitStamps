@@ -79,7 +79,7 @@ DayStamps의 "New Activity" 폼을 참조해 구현:
 
 - 외관: 시스템/라이트/다크 세그먼트.
 - 관리: "보관된 습관 관리" 링크 → §3-8의 아카이브 화면으로 이동.
-- Developer: Sync Server URL, Device Token 입력 + "지금 동기화" 버튼, 결과(push/pull 건수, 충돌 건수) 텍스트 표시.
+- 동기화: `사용 안 함 | REST 백엔드 | Supabase` 세그먼트. `REST 백엔드` 선택 시 Sync Server URL/Device Token 입력 필드. `Supabase` 선택 시 프로젝트 URL/anon key 입력 필드 + "Google로 로그인" 버튼(로그인 후엔 로그인된 이메일 표시 + "로그아웃" 버튼으로 대체). 어느 쪽이든(단, Supabase는 로그인 후에만) "지금 동기화" 버튼 + 결과(push/pull 건수, 충돌 건수) 텍스트 표시. 설계는 [architecture.md](./architecture.md) §5 참고.
 
 ### 3-8. 습관 보관/복구 — 습관 수정 폼 + `archive.tsx`
 

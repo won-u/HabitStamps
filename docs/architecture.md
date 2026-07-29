@@ -148,14 +148,18 @@ UI/usecase는 `HabitRepository` 인터페이스에만 의존한다. v1은 `Local
 
 **어댑터 스위칭(Composition Root)**:
 ```typescript
-function buildSyncEngine(settings: { syncServerUrl: string | null; deviceToken: string }, db: AppDatabase) {
-  const gateway = settings.syncServerUrl
-    ? new RestSyncGateway(settings.syncServerUrl, settings.deviceToken)
-    : new NoopSyncGateway();
-  return new SyncEngine(db, gateway);
+async function buildSyncEngine(settings: { syncMode: 'off'|'icloud'|'rest'; syncServerUrl: string|null; deviceToken: string }) {
+  let gateway: SyncGateway = new NoopSyncGateway();
+  if (settings.syncMode === 'icloud' && Platform.OS === 'ios') {
+    const { CloudKitSyncGateway } = await import('./cloudkit-sync-gateway'); // iOS에서만 로드
+    gateway = new CloudKitSyncGateway(CLOUDKIT_CONTAINER_ID);
+  } else if (settings.syncMode === 'rest' && settings.syncServerUrl) {
+    gateway = new RestSyncGateway(settings.syncServerUrl, settings.deviceToken);
+  }
+  return new SyncEngine(habitRepository, checkInRepository, gateway);
 }
 ```
-설정 화면(Settings > Developer)에 `Sync Server URL` / `Device Token` 입력 필드를 두어, **코드 변경 없이 런타임 설정만으로** 로컬 전용 ↔ 동기화 모드를 전환한다. 값이 비어있으면 `NoopSyncGateway`(v1 그대로), 채우면 `RestSyncGateway`(로컬 백엔드와 실제 push/pull)로 전환된다.
+설정 화면의 "동기화" 섹션에서 `사용 안 함 / iCloud / REST 백엔드` 세 모드를 런타임에 전환한다 — **코드 변경 없이 설정만으로** 전환되는 원칙은 그대로 유지. `iCloud` 모드는 iOS에서만 활성화되고(Android에서는 선택 자체가 비활성화됨), 나머지는 §5 참고.
 
 ---
 
@@ -221,6 +225,51 @@ volumes: { pgdata: }
 
 검증 중 발견/수정한 이슈:
 - Postgres가 `timestamp with time zone`을 텍스트 모드로 반환할 때 형식이 엄격한 ISO 8601이 아니어서(`"2026-07-29 02:09:20.000+00"`) `z.string().datetime()`이 거부함 → `packages/core`의 동기화 관련 timestamp 필드를 전부 `z.string()`으로 완화해 해결.
+
+---
+
+## 5. Supabase 동기화 — REST 백엔드와 병행하는 세 번째 SyncGateway
+
+### 5-0. 히스토리: iCloud/CloudKit을 검토했다가 걷어낸 이유
+
+v1 초반엔 iCloud를 "Apple 생태계 전용이라 Android/Web 확장과 상충한다"는 이유로 기각했다(§배경). 이후 iPhone에서 먼저 쓸 계획이 확정되며 "자체 서버 없이 사용자 자신의 iCloud 계정만으로 동기화"라는 장점이 재조명되어, 한 차례 CloudKit(`expo-cloudkit` 패키지)로 `CloudKitSyncGateway`를 실제로 구현했었다. 하지만 **CloudKit 컨테이너 생성 자체가 유료 Apple Developer Program 가입($99/년)을 요구**하고, 이 프로젝트는 가입 계획이 없어 **그 코드는 영구히 실행 불가능한 상태**였다 — 미사용 코드를 남겨두지 않는다는 원칙에 따라 CloudKit 관련 코드·의존성·설정 전체를 제거했다.
+
+이 과정에서 재확인된 것: **원래 목표(Android/Web 확장)에는 CloudKit보다 Supabase가 더 잘 맞는다** — CloudKit은 애초에 iOS 전용이었지만, Supabase는 같은 JS 클라이언트로 iOS/Android/Web 어디서든 동일하게 동작한다.
+
+### 5-1. 검토한 방식과 채택 사유
+
+| 방식 | 검토 결과 |
+|---|---|
+| iCloud Key-Value Store | 전체 1MB / 키 1024개 제한 — 전체 이력엔 부적합. **채택 안 함**. |
+| iCloud Drive에 SQLite 파일 자체를 동기화 | Apple 공식 가이드가 비추천하는 안티패턴(충돌 시 데이터 유실 위험). **채택 안 함**. |
+| CloudKit | 유료 Apple Developer Program 필요, iOS 전용. 가입 계획이 없어 **구현 후 제거**(§5-0). |
+| **Supabase**(Postgres + Auth + RLS, 무료 티어) | 무료, 크로스플랫폼, 관리형 호스팅이라 서버를 직접 띄워둘 필요가 없음 — **채택**. |
+
+**Supabase 무료 티어의 실제 제약과 이 프로젝트에서의 영향**:
+- DB 500MB/파일 1GB/MAU 5만 — 개인용 습관 데이터엔 충분.
+- **7일간 DB 활동이 없으면 프로젝트가 자동 일시정지**된다(대시보드에서 재개 가능, 장기 방치 시 삭제 사례도 있음). 자동 백업/PITR도 없다. 다만 이 앱은 **local-first**라 SQLite가 항상 진짜 원본이고 Supabase는 동기화 중계지일 뿐이므로, Supabase 쪽 데이터가 사라져도 다음 동기화 때 각 기기가 자기 로컬 데이터를 다시 올리면 복구된다 — 이 아키텍처가 무료 티어의 두 리스크를 실질적으로 완충한다.
+
+### 5-2. 스키마/RLS/충돌 해소 설계 (`docs/supabase-schema.sql`)
+
+- `habits`/`check_ins` 테이블에 `user_id` 컬럼을 추가하고 Row Level Security로 `user_id = auth.uid()`인 행만 보이게 격리한다 — REST 백엔드(단일 고정 토큰, 단일 사용자 가정)와 달리 Supabase 경로는 여러 사용자를 전제로 하므로 처음부터 사용자별 격리가 필요하다.
+- **LWW 충돌 해소는 Postgres 함수(RPC)로 서버에서 원자적으로 처리**한다 — `sync_upsert_habits`/`sync_upsert_check_ins`가 `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE <table>.updated_at < excluded.updated_at`로 "들어오는 값이 더 최신일 때만" 덮어쓰고, 실제로 반영된 id만 반환한다. 클라이언트(`SupabaseSyncGateway`)는 요청한 id 중 반환되지 않은 것을 `conflicts`로 보고한다 — REST 백엔드(§4-3)와 동일한 정책을 평범한 `.upsert()` 호출로는 표현할 수 없어 RPC로 옮긴 것.
+- **검증**: 이 SQL은 문서에만 존재하는 게 아니라, 실제로 로컬 Postgres에 `auth.uid()`/`auth.users`를 스텁으로 만들어 6가지 시나리오(최초 insert 수락, 더 오래된 쓰기 거부, 더 최신 쓰기 수락, RLS로 타 사용자 행 격리, RPC가 호출자 본인 명의로만 행을 생성하는지, pull 쿼리가 RLS로 올바르게 스코프되는지)를 **`authenticated`라는 저권한 role로(테이블 소유자로 실행하면 RLS가 우회되므로) 실제로 실행해 전부 통과 확인**했다(`apps/mobile/scripts/supabase-test/`). CloudKit 때는 타입 수준까지만 검증할 수 있었던 것과 달리, 이번엔 핵심 로직 자체를 실행 검증했다.
+
+### 5-3. `SupabaseSyncGateway` (`apps/mobile/src/data/sync/supabase-sync-gateway.ts`)
+
+- 기존 `SyncGateway` 인터페이스를 그대로 구현. `push()`는 위 RPC 두 개를 호출, `pull()`은 `updated_at > since`로 `.select()`한다 — RLS가 자동으로 본인 행만 반환하므로 게이트웨이가 `user_id`를 따로 필터링할 필요가 없다.
+- CloudKit 때와 달리 **네이티브 모듈이 아닌 순수 JS 클라이언트**(`@supabase/supabase-js`)라 `Platform.OS` 가드나 동적 import가 필요 없다 — iOS/Android/Web 어디서든 같은 코드 경로.
+- 세션 저장은 `expo-secure-store`가 아니라 `@react-native-async-storage/async-storage`를 쓴다 — SecureStore는 항목당 ~2048바이트 제한이 있어 Supabase 세션(JWT access/refresh token 포함)이 그 한도를 넘기기 쉽고, 이는 Supabase 커뮤니티에서 널리 보고된 이슈다.
+- 로그인은 `@react-native-google-signin/google-signin`(네이티브, Credential Manager 기반)이 아니라 `signInWithOAuth` + `expo-web-browser`의 브라우저 리다이렉트 플로우를 쓴다 — 전자는 커스텀 네이티브 모듈이라 Expo Go에서 동작하지 않아(CloudKit과 같은 종류의 문제) 이 개발 환경에서 검증이 불가능해지므로, Expo Go에서도 그대로 동작하는 후자를 택했다. 실제로 Android 에뮬레이터(Expo Go)에서 새 의존성들이 정상 번들링되고, 로그인 버튼이 (미설정 상태에서) 크래시 없이 올바른 안내 메시지를 띄우는 것까지 확인했다.
+- Apple 로그인은 아직 없다 — App Store 배포 시 Google 등 제3자 소셜 로그인을 제공하면 Apple 로그인도 함께 제공해야 한다는 심사 규정이 있지만, 이는 Apple Developer Program 가입 이후에나 의미가 있어 지금은 범위 밖으로 남겨둔다.
+
+### 5-4. 사용자가 직접 해야 하는 설정
+
+1. [supabase.com](https://supabase.com)에서 무료 프로젝트 생성.
+2. 프로젝트의 SQL Editor에 `docs/supabase-schema.sql` 전체를 붙여넣고 실행.
+3. Authentication > Providers에서 Google 활성화 — Google Cloud Console에서 OAuth 클라이언트를 만들고 Client ID/Secret을 등록, Redirect URI는 Supabase가 제공하는 `https://<project>.supabase.co/auth/v1/callback`로 설정.
+4. 앱의 설정 > 동기화 > Supabase에서 프로젝트 URL과 anon(public) key(둘 다 Supabase 대시보드 Settings > API에 있음)를 입력, "Google로 로그인" 후 "지금 동기화".
+5. 두 번째 기기에서 같은 Google 계정으로 로그인하면 동일한 데이터가 보이는지 확인 — 이 마지막 왕복 검증은 실제 Supabase 프로젝트가 있어야 하므로 사용자가 직접 수행해야 한다(§5-2에서 로직 자체는 이미 검증됨).
 
 ---
 
