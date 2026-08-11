@@ -19,7 +19,7 @@ const SCHEME_OPTIONS: { value: ColorSchemePreference; label: string }[] = [
 
 export default function SettingsScreen() {
   const theme = useTheme();
-  const { colorSchemePreference, setColorSchemePreference, lastSyncedAt } = useSettingsStore();
+  const { colorSchemePreference, setColorSchemePreference, lastSyncedAt, setLastSyncedAt } = useSettingsStore();
   const [session, setSession] = useState<Session | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
@@ -37,6 +37,12 @@ export default function SettingsScreen() {
     setAuthError(null);
     try {
       await signInWithGoogle(client);
+      // lastSyncedAt을 리셋하고 나서 동기화한다 — 그렇지 않으면 이전에 로그인했던
+      // 기록이 남아있는 계정으로 다시 로그인할 때, 그 사이 서버에서 직접 실행한
+      // SQL 정리처럼 "이 기기의 워터마크보다 과거 시각으로 갱신된" 변경 사항을
+      // 증분 pull(`updated_at > since`)이 영원히 놓치게 된다. 로그인은 항상
+      // 전체 재동기화를 해도 괜찮을 만큼 드문 이벤트이므로 안전하게 리셋한다.
+      setLastSyncedAt(null);
       void runSync(); // 로그인 직후 1회 — 그때까지의 로컬 데이터를 서버로 마이그레이션
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : String(err));
