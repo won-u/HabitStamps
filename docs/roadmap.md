@@ -93,6 +93,19 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 - 태블릿의 `habit-tracker.db` 파일을 꺼내 그 29개 row만 `deleted_at`을 채워 soft-delete한 뒤 다시 기기에 써넣는 방식으로 정리(사용자 승인 후 진행 — 자동 모드 안전장치가 로컬 DB 직접 수정을 1차 차단했으나, 무엇을 왜 하려는지 설명 후 명시적 허락을 받아 진행).
 - 정리 후 태블릿에서 "제라도 301EXX"가 정상적으로 3/3 표시되는 것, 폰 쪽은 원래부터 중복이 없었던 것(서버와 84 vs 83으로 거의 일치, 날짜 중복 없음)까지 확인 완료.
 
+## 2026-08-11 기능 추가: 오늘 화면 그룹·습관 드래그 재정렬
+
+오늘 화면에서 그룹(카테고리) 순서와 그룹 내 습관 순서를 롱터치+드래그로 바꿀 수 있게 했다. `Habit`/`Category` 모델에는 이미 `sortOrder` 필드가 있었고 로컬 저장소의 `list()`가 이미 그 값으로 정렬하고 있었지만, 정작 사용자가 그 값을 바꿀 UI가 없었다.
+
+- **`react-native-draggable-flatlist` 같은 서드파티 라이브러리를 새로 추가하지 않았다** — 이 프로젝트는 RN 0.86 + Reanimated 4(New Architecture)라는 최신 조합을 쓰고 있어서, 그 조합에 대한 호환성이 검증되지 않은 라이브러리를 들이는 리스크보다 이미 설치돼 있던 `react-native-gesture-handler`/`react-native-reanimated`(둘 다 `habit-card.tsx`의 체크 애니메이션 등에서 이미 쓰이고 있음) 위에 직접 만드는 쪽을 택했다. `apps/mobile/src/components/reorderable-list.tsx`에 범용 세로 드래그 재정렬 컴포넌트를 새로 구현 — 화면이 FlatList가 아니라 몇 개 섹션을 가진 단일 ScrollView 구조라 가벼운 자체 구현으로 충분했다.
+- `Gesture.Pan().activateAfterLongPress(350)`으로 "롱터치 후 드래그"를 구현 — 일반 탭은 그대로 카드/헤더의 기존 `Pressable`/`Link`에 도달하고, 350ms 이상 누르고 있을 때만 드래그가 시작된다.
+- 행마다 실제 높이를 `onLayout`으로 측정해 누적 오프셋을 계산 — 습관 카드(고정 높이)와 그룹 전체 블록(헤더+가변 개수의 카드, 접힘 여부에 따라 높이가 또 달라짐) 양쪽에 재사용하기 위해서다.
+- 그룹을 드래그할 때 그 안의 습관 카드까지 같이 끌려오지 않도록, `renderItem`이 드래그 제스처를 직접 노출하는 render-prop 패턴(`DragHandle`)으로 설계 — 그룹은 헤더에만 제스처를 걸고, 습관 목록은 별도의 중첩된 `ReorderableList`로 각자 자기 카드에 제스처를 건다.
+- **버그 1**: `GestureDetector must be used as a descendant of GestureHandlerRootView` — Expo Router가 이 프로젝트 버전에서는 루트를 자동으로 감싸주지 않았다. `app/_layout.tsx`에서 `GestureHandlerRootView`로 명시적으로 감싸 해결.
+- **버그 2 (제스처가 중간에 멈추는 문제)**: `onEnd`에서만 커밋(잠금 해제 + 저장)을 하고 있었는데, `adb shell input draganddrop`으로 만든 합성 터치 이벤트가 정상적인 `onEnd`를 안 타고 취소되는 경우가 있어 드래그가 영원히 "잠긴" 채로 남았다(재시작 전까지 다른 갱신도 안 먹힘). 항상 호출되는 `onFinalize`로 커밋을 옮겨 해결.
+- **버그 3 (가장 까다로웠던 것)**: 그룹을 재정렬해도 화면이 갱신되지 않고 이전 순서를 계속 보여줬다 — DB에는 새 순서가 정확히 저장되는데도 그랬다. 원인은 `ReorderableList`의 재동기화 로직이 "키 시퀀스가 같으면 아무것도 안 한다"였던 것: 그룹 자체의 key(카테고리 id)는 습관 순서가 바뀌어도 그대로이므로 "같다"고 판단해 그룹의 새 `items` 내용을 절대 안 받아들이고 있었다. 키 시퀀스는 로컬 상태 그대로 유지하되, 각 항목의 실제 객체는 항상 최신 `data`에서 다시 가져오도록 수정.
+- 태블릿+폰 두 기기 모두에서 습관 재정렬/그룹 재정렬 각각 실기기(에뮬레이터) 드래그로 검증 — 재정렬 직후 화면 즉시 반영, DB에 정확한 `sortOrder` 저장, 앱 재시작 후에도 유지되는 것까지 확인. `sortOrder`는 다른 필드처럼 그대로 동기화되므로, 한 기기에서 재정렬하면 다른 기기에도 그 순서가 그대로 전파된다.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*
