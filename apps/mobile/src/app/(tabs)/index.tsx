@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,8 +29,16 @@ export default function TodayScreen() {
   const [categories, setCategories] = useState<readonly Category[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const stripRef = useRef<ScrollView>(null);
 
   useEffect(() => categoryRepository.observe().subscribe(setCategories), []);
+
+  // The strip ends on `today`, so a fresh mount otherwise leaves the
+  // ScrollView at its default (leftmost) offset — showing only past days with
+  // today itself scrolled off the right edge.
+  useEffect(() => {
+    stripRef.current?.scrollToEnd({ animated: false });
+  }, []);
 
   const strip = useMemo(() => {
     const base = new Date(today);
@@ -102,6 +110,7 @@ export default function TodayScreen() {
       </View>
 
       <ScrollView
+        ref={stripRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.stripContent}

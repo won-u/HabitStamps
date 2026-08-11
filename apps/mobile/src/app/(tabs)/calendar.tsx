@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { addMonths, eachDayOfInterval, endOfMonth, format, isSameMonth, startOfMonth, subMonths } from 'date-fns';
+import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { addMonths, eachDayOfInterval, endOfMonth, format, getDay, isSameMonth, startOfMonth, subMonths } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import type { CheckIn, Habit } from '@habit-tracker/core';
 
@@ -11,8 +11,13 @@ import { useSwipeNavigation } from '@/hooks/use-swipe-navigation';
 import { YearMonthPickerModal } from '@/components/year-month-picker-modal';
 import { habitRepository, checkInRepository } from '@/composition/container';
 
+const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
+const GRID_GAP = 6;
+const CONTAINER_PADDING = 20;
+
 export default function CalendarScreen() {
   const theme = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
   const [month, setMonth] = useState(new Date());
   const [habits, setHabits] = useState<readonly Habit[]>([]);
   const [allCheckIns, setAllCheckIns] = useState<readonly CheckIn[]>([]);
@@ -24,7 +29,21 @@ export default function CalendarScreen() {
   // screen shows up here immediately instead of only on the next month change.
   useEffect(() => checkInRepository.observeAll().subscribe(setAllCheckIns), []);
 
+  // Exact pixel size (not aspectRatio, which doesn't reliably resolve against a
+  // percentage width in a flex-wrap row) so cells are genuinely square and the
+  // 7-day week fills the row edge-to-edge instead of leaving a gap on the right.
+  // Floored so 7 cells + 6 gaps stay strictly under the available width — an
+  // exact (unfloored) division leaves zero rounding margin, and Yoga rounding
+  // the fractional width up on each cell then pushes the 7th cell to the next
+  // row instead of filling the Saturday column.
+  const cellSize = Math.floor((windowWidth - CONTAINER_PADDING * 2 - GRID_GAP * 6) / 7);
   const days = useMemo(() => eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) }), [month]);
+  // Leading blanks so the 1st falls under its actual weekday column instead of
+  // always starting at the grid's top-left cell regardless of day-of-week.
+  const leadingBlanks = useMemo(
+    () => Array.from({ length: getDay(startOfMonth(month)) }, (_, index) => `blank-${index}`),
+    [month],
+  );
 
   const checkInsByDate = useMemo(() => {
     const map: Record<string, CheckIn[]> = {};
@@ -76,7 +95,21 @@ export default function CalendarScreen() {
       />
 
       <ScrollView contentContainerStyle={styles.scroll}>
+        <View style={styles.weekdayRow}>
+          {WEEKDAY_LABELS.map((label) => (
+            <ThemedText
+              key={label}
+              type="small"
+              themeColor="textSecondary"
+              style={[styles.weekdayLabel, { width: cellSize }]}>
+              {label}
+            </ThemedText>
+          ))}
+        </View>
         <View style={styles.grid} {...swipeHandlers}>
+          {leadingBlanks.map((key) => (
+            <View key={key} style={{ width: cellSize, height: cellSize }} />
+          ))}
           {days.map((day) => {
             const dateStr = format(day, 'yyyy-MM-dd');
             const dayCheckIns = checkInsByDate[dateStr] ?? [];
@@ -90,7 +123,12 @@ export default function CalendarScreen() {
                 onPress={() => setSelectedDate(dateStr)}
                 style={[
                   styles.dayCell,
-                  { backgroundColor: theme.backgroundElement, borderColor: selectedDate === dateStr ? theme.text : 'transparent' },
+                  {
+                    width: cellSize,
+                    height: cellSize,
+                    backgroundColor: theme.backgroundElement,
+                    borderColor: selectedDate === dateStr ? theme.text : 'transparent',
+                  },
                 ]}>
                 <ThemedText type="small">{format(day, 'd')}</ThemedText>
                 <View style={styles.dotsRow}>
@@ -158,17 +196,20 @@ const styles = StyleSheet.create({
   container: { flex: 1, padding: 20 },
   monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   scroll: { paddingBottom: 40 },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  weekdayRow: { flexDirection: 'row', gap: GRID_GAP, marginBottom: 8 },
+  weekdayLabel: { textAlign: 'center' },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
   dayCell: {
-    width: '13%',
-    aspectRatio: 1,
     borderRadius: 10,
     borderWidth: 1.5,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
   },
-  dotsRow: { flexDirection: 'row', gap: 2 },
+  // Fixed height (not auto) so the day number sits at the same vertical spot
+  // whether or not this day has check-in dots — an empty row would otherwise
+  // collapse to 0 height and shift the number down relative to days with dots.
+  dotsRow: { flexDirection: 'row', gap: 2, height: 6 },
   dot: { width: 5, height: 5, borderRadius: 2.5 },
   detail: { marginTop: 16, borderRadius: 14, padding: 16, gap: 4 },
   monthlyCounts: { marginTop: 20, gap: 8 },
