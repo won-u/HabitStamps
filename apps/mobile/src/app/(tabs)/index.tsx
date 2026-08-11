@@ -53,9 +53,15 @@ export default function TodayScreen() {
   }, [today]);
 
   const groups = useMemo<Group[]>(() => {
+    const knownCategoryIds = new Set(categories.map((category) => category.id));
     const byCategory = new Map<string, TodayHabit[]>();
     for (const item of items) {
-      const key = item.habit.categoryId ?? DEFAULT_GROUP_KEY;
+      const categoryId = item.habit.categoryId;
+      // Categories are local-only (never part of SyncGateway), so a habit
+      // synced from another device can reference a category id this device
+      // has never heard of — fall back to the default group instead of
+      // silently dropping the habit from the list.
+      const key = categoryId && knownCategoryIds.has(categoryId) ? categoryId : DEFAULT_GROUP_KEY;
       const bucket = byCategory.get(key);
       if (bucket) bucket.push(item);
       else byCategory.set(key, [item]);
