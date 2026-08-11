@@ -1,4 +1,13 @@
-import type { CheckIn, EntityChangeSet, Habit, SyncChangeSet, SyncGateway, SyncPullResult, SyncPushResult } from "@habit-tracker/core";
+import type {
+  Category,
+  CheckIn,
+  EntityChangeSet,
+  Habit,
+  SyncChangeSet,
+  SyncGateway,
+  SyncPullResult,
+  SyncPushResult,
+} from "@habit-tracker/core";
 import { emptyEntityChangeSet } from "@habit-tracker/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -26,6 +35,17 @@ interface CheckInRow {
   note: string | null;
   photo_uri: string | null;
   value: number | null;
+  created_at: string;
+  updated_at: string;
+  version: number;
+  deleted_at: string | null;
+}
+
+interface CategoryRow {
+  id: string;
+  name: string;
+  color: string;
+  sort_order: number;
   created_at: string;
   updated_at: string;
   version: number;
@@ -66,6 +86,19 @@ function rowToCheckIn(row: CheckInRow): CheckIn {
   };
 }
 
+function rowToCategory(row: CategoryRow): Category {
+  return {
+    id: row.id,
+    name: row.name,
+    color: row.color,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    version: row.version,
+    deletedAt: row.deleted_at,
+  };
+}
+
 /**
  * Syncs via this app's one fixed Supabase project (Postgres + Auth + RLS) —
  * see docs/architecture.md §5. Works identically on iOS/Android/web (pure JS
@@ -76,8 +109,9 @@ function rowToCheckIn(row: CheckInRow): CheckIn {
  * `auth.uid()`, so `pull()`'s plain `.select()` only ever returns the signed-in
  * user's own rows without this gateway needing to filter by user id itself.
  *
- * `push()` calls the `sync_upsert_habits`/`sync_upsert_check_ins` Postgres
- * RPCs (docs/supabase-schema.sql) rather than a plain `.upsert()` — a plain
+ * `push()` calls the `sync_upsert_habits`/`sync_upsert_check_ins`/
+ * `sync_upsert_categories` Postgres RPCs (docs/supabase-schema.sql) rather
+ * than a plain `.upsert()` — a plain
  * upsert has no way to express "only overwrite if the incoming row is
  * newer", so the LWW comparison (matching the REST backend's policy,
  * architecture.md §4-3) is done server-side, atomically, in SQL. Each RPC
@@ -106,21 +140,32 @@ export class SupabaseSyncGateway implements SyncGateway {
       for (const checkIn of dirtyCheckIns) if (!accepted.has(checkIn.id)) conflicts.push(checkIn.id);
     }
 
+    const dirtyCategories = [...changes.categories.created, ...changes.categories.updated];
+    if (dirtyCategories.length > 0) {
+      const { data, error } = await this.client.rpc("sync_upsert_categories", { rows: dirtyCategories });
+      if (error) throw error;
+      const accepted = new Set((data ?? []) as string[]);
+      for (const category of dirtyCategories) if (!accepted.has(category.id)) conflicts.push(category.id);
+    }
+
     return { acceptedAt: new Date().toISOString(), conflicts };
   }
 
   async pull(sinceIso: string): Promise<SyncPullResult> {
-    const [habitsResult, checkInsResult] = await Promise.all([
+    const [habitsResult, checkInsResult, categoriesResult] = await Promise.all([
       this.client.from("habits").select("*").gt("updated_at", sinceIso).order("updated_at"),
       this.client.from("check_ins").select("*").gt("updated_at", sinceIso).order("updated_at"),
+      this.client.from("categories").select("*").gt("updated_at", sinceIso).order("updated_at"),
     ]);
     if (habitsResult.error) throw habitsResult.error;
     if (checkInsResult.error) throw checkInsResult.error;
+    if (categoriesResult.error) throw categoriesResult.error;
 
     const habits = toEntityChangeSet(habitsResult.data as HabitRow[], rowToHabit);
     const checkIns = toEntityChangeSet(checkInsResult.data as CheckInRow[], rowToCheckIn);
+    const categories = toEntityChangeSet(categoriesResult.data as CategoryRow[], rowToCategory);
 
-    return { serverTime: new Date().toISOString(), changes: { habits, checkIns } };
+    return { serverTime: new Date().toISOString(), changes: { habits, checkIns, categories } };
   }
 }
 

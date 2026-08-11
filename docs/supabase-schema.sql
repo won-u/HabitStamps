@@ -38,8 +38,22 @@ create table if not exists public.check_ins (
 );
 create index if not exists check_ins_user_updated_idx on public.check_ins (user_id, updated_at);
 
+create table if not exists public.categories (
+  id uuid primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  name text not null,
+  color text not null,
+  sort_order integer not null default 0,
+  created_at timestamptz not null,
+  updated_at timestamptz not null,
+  version integer not null default 1,
+  deleted_at timestamptz
+);
+create index if not exists categories_user_updated_idx on public.categories (user_id, updated_at);
+
 alter table public.habits enable row level security;
 alter table public.check_ins enable row level security;
+alter table public.categories enable row level security;
 
 drop policy if exists habits_select_own on public.habits;
 create policy habits_select_own on public.habits for select using (user_id = auth.uid());
@@ -54,6 +68,13 @@ drop policy if exists check_ins_insert_own on public.check_ins;
 create policy check_ins_insert_own on public.check_ins for insert with check (user_id = auth.uid());
 drop policy if exists check_ins_update_own on public.check_ins;
 create policy check_ins_update_own on public.check_ins for update using (user_id = auth.uid());
+
+drop policy if exists categories_select_own on public.categories;
+create policy categories_select_own on public.categories for select using (user_id = auth.uid());
+drop policy if exists categories_insert_own on public.categories;
+create policy categories_insert_own on public.categories for insert with check (user_id = auth.uid());
+drop policy if exists categories_update_own on public.categories;
+create policy categories_update_own on public.categories for update using (user_id = auth.uid());
 
 -- Batch upsert with server-side LWW: a row only overwrites the existing one
 -- if its updated_at is strictly newer (mirrors apps/backend/src/db/upsert.ts's
@@ -102,7 +123,7 @@ begin
 end;
 $$;
 
-grant select, insert, update on public.habits, public.check_ins to authenticated;
+grant select, insert, update on public.habits, public.check_ins, public.categories to authenticated;
 
 create or replace function public.sync_upsert_check_ins(rows jsonb) returns uuid[]
 language plpgsql security definer as $$
@@ -143,4 +164,39 @@ begin
 end;
 $$;
 
-grant execute on function public.sync_upsert_habits, public.sync_upsert_check_ins to authenticated;
+create or replace function public.sync_upsert_categories(rows jsonb) returns uuid[]
+language plpgsql security definer as $$
+declare
+  uid uuid := auth.uid();
+  accepted uuid[] := '{}';
+  r jsonb;
+  did uuid;
+begin
+  if uid is null then raise exception 'not authenticated'; end if;
+
+  for r in select * from jsonb_array_elements(rows) loop
+    did := null;
+    insert into public.categories (
+      id, user_id, name, color, sort_order, created_at, updated_at, version, deleted_at
+    )
+    values (
+      (r->>'id')::uuid, uid, r->>'name', r->>'color', (r->>'sortOrder')::integer,
+      (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
+      (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
+    )
+    on conflict (id) do update set
+      name = excluded.name, color = excluded.color, sort_order = excluded.sort_order,
+      updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at
+    where public.categories.user_id = uid and public.categories.updated_at < excluded.updated_at
+    returning id into did;
+
+    if did is not null then
+      accepted := array_append(accepted, did);
+    end if;
+  end loop;
+
+  return accepted;
+end;
+$$;
+
+grant execute on function public.sync_upsert_habits, public.sync_upsert_check_ins, public.sync_upsert_categories to authenticated;

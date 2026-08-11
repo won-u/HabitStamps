@@ -67,7 +67,19 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 
 - **근본 원인**: 기기의 로컬 SQLite를 직접 열어보니(`adb ... run-as ... cat files/SQLite/habit-tracker.db`), 동기화된 습관 "제라도 301EXX"는 `category_id`가 채워져 있는데 이 기기의 `categories` 테이블은 비어 있었다. 카테고리는 `SyncGateway`가 다루지 않는 로컬 전용 데이터라(§5), 습관의 `categoryId` 값 자체는 다른 필드처럼 그대로 동기화되지만 그 카테고리의 실체(이름/색)는 원래 기기에만 있다. `(tabs)/index.tsx`의 그룹핑 로직이 "로컬에 존재하는 카테고리와 매치되는 습관만" 그룹에 포함시키고 있어서, 매치 안 되는 습관은 `items.length`엔 잡히지만 어떤 그룹에도 안 들어가 화면에서 통째로 사라졌다.
 - **수정**: 그룹핑 시 `categoryId`가 이 기기에 실재하는 카테고리를 가리킬 때만 그 카테고리 그룹으로 보내고, 아니면(카테고리 없음 또는 모르는 카테고리) "기본" 그룹으로 폴백하도록 변경 — 어떤 습관도 화면에서 사라지지 않는다.
-- **알려진 한계(후속 과제로 남김)**: 카테고리 자체를 동기화하지 않는 한, 다른 기기에서 만든 커스텀 카테고리의 이름/색은 여전히 새 기기에 나타나지 않고 그 습관은 "기본" 그룹으로 보인다. 카테고리까지 완전히 동기화하려면 Supabase에 categories 테이블 추가 + `SyncEngine`에 세 번째 엔티티로 편입하는 별도 작업이 필요하다.
+- 위 그룹핑 폴백은 임시방편이었고, 사용자 피드백("사용자라면 이전에 저장된 상태 그대로 동기화되기를 기대할 것")에 따라 바로 아래 항목에서 카테고리 자체를 완전히 동기화하도록 확장했다.
+
+## 2026-08-11 기능 추가: 카테고리 완전 동기화
+
+`Category` 모델과 `LocalCategoryRepository`는 애초부터 `SyncableRepository`(findPendingSync/markSynced/applyRemoteChanges/applyRemoteDeletes)를 전부 구현해두고 있었지만 — 정작 `SyncGateway`/`SyncEngine`/Supabase 스키마 쪽에서 habits·checkIns 둘만 다루고 카테고리는 빠져 있어서 로컬 전용으로 남아 있었다(바로 위 항목의 버그가 그 결과). 이번에 세 번째 동기화 엔티티로 정식 편입했다.
+
+- `packages/core`: `SyncChangeSet`에 `categories: EntityChangeSet<Category>` 추가(`emptySyncChangeSet`/zod 스키마 포함).
+- `SyncEngine`(`apps/mobile/src/data/sync/sync-engine.ts`): 생성자가 `CategoryRepository`를 추가로 받고, habits/checkIns와 동일하게 pending 카테고리를 push하고 원격 변경분을 pull해 반영한다. pull 적용 순서는 **카테고리 → 습관 → 체크인** — 습관의 `categoryId`가 가리키는 카테고리가 그 습관 자체보다 먼저 로컬에 존재해야 오늘 화면 그룹핑이 첫 렌더부터 올바르게 되기 때문.
+- `SupabaseSyncGateway`: `sync_upsert_categories` RPC 호출(push)과 `categories` 테이블 `.select()`(pull) 추가, `CategoryRow ↔ Category` 매핑.
+- `docs/supabase-schema.sql`: `categories` 테이블(+ `user_id`/RLS/인덱스) 신설, `sync_upsert_categories` RPC를 `sync_upsert_habits`와 같은 LWW 패턴으로 추가. **기존에 이미 Supabase 프로젝트를 설정해둔 사용자는 이 SQL 파일 전체를 다시 한번 SQL Editor에서 실행해야 한다** — `if not exists`/`or replace`/`drop policy if exists` 위주라 재실행해도 안전하다.
+- `composition/container.ts`: `categoryRepository`도 `habitRepository`/`checkInRepository`처럼 `withSyncTrigger`로 감싸 로컬 카테고리 생성/수정/보관이 자동으로 동기화를 예약하게 했다.
+- 이미 로컬에 있던 카테고리들은 한 번도 push된 적이 없어 전부 `syncStatus: 'pending'`으로 남아 있었으므로, 이 배포 이후 첫 자동 동기화 때 별도 마이그레이션 없이 그대로 push된다.
+- emulator-5556에서 재확인: "제라도 301EXX"가 원래 카테고리 이름/색 그대로 표시되는지까지 검증 필요(사용자 확인 대기).
 
 ## 구현 단계
 

@@ -99,7 +99,10 @@ interface CheckIn {
 }
 // DB 제약: UNIQUE(habitId, date) WHERE deletedAt IS NULL — 습관당 하루 1스탬프
 
-interface Category { id: string; name: string; color: string; sortOrder: number; }
+interface Category {
+  id: string; name: string; color: string; sortOrder: number;
+  createdAt: string; updatedAt: string; version: number; deletedAt: string | null;
+}
 
 interface Reminder {
   id: string; habitId: string; timeOfDay: string; // 'HH:mm'
@@ -110,7 +113,7 @@ interface Reminder {
 
 - **Journal(메모 모아보기)**은 별도 테이블 없이 `CheckIn.note`/`photoUri`가 채워진 레코드 조회 쿼리로 구현(과설계 방지). 자유 메모가 필요해지면 그때 `notes` 테이블을 추가(additive라 안전). *(현재 상태: `note`/`photoUri` 필드와 쿼리 설계는 있으나 입력 UI/Journal 화면은 아직 미구현 — [features.md](./features.md) 참고)*
 - **Reminder**는 모델·Repository 인터페이스(`packages/core`)만 정의되어 있고, `apps/mobile`에는 아직 로컬 구현체(`LocalReminderRepository`)와 `expo-notifications` 스케줄링 연결이 없다 — 스캐폴드만 존재하는 상태.
-- **Category(그룹)**는 계획 단계보다 먼저 v1에 편입되어 실제 구현됨: `packages/core`의 `Category` 모델 + `apps/mobile`의 `LocalCategoryRepository`(SQLite `categories` 테이블), 습관 등록 폼에서 그룹 선택/인라인 생성, 오늘 화면·리포트 화면에서 그룹별 섹션 렌더링까지 연결되어 있다.
+- **Category(그룹)**는 계획 단계보다 먼저 v1에 편입되어 실제 구현됨: `packages/core`의 `Category` 모델 + `apps/mobile`의 `LocalCategoryRepository`(SQLite `categories` 테이블), 습관 등록 폼에서 그룹 선택/인라인 생성, 오늘 화면·리포트 화면에서 그룹별 섹션 렌더링까지 연결되어 있다. 2026-08-11부터 habits/checkIns와 동일하게 Supabase로 동기화된다(§5) — 그 전까지는 로컬 전용이라, 습관의 `categoryId`는 동기화되는데 그 카테고리 자체(이름/색)는 원래 기기에만 있어서 다른 기기에서 습관이 통째로 안 보이는 버그가 있었다(roadmap.md 참고).
 - 인덱스: `checkins(habit_id, date)`, `checkins(updated_at)`(pull용), `habits(updated_at)`, `habits(deleted_at)`.
 - 제약(NOT NULL/UNIQUE/FK)은 애플리케이션이 아니라 SQLite/Postgres DB 레벨에서 건다.
 - 마이그레이션은 `drizzle-kit generate`로 SQL 파일 생성, 앱 부팅 시 `drizzle-orm/expo-sqlite/migrator`로 적용.
@@ -131,6 +134,7 @@ interface HabitRepository {
 interface SyncChangeSet {
   habits: { created: Habit[]; updated: Habit[]; deletedIds: string[] };
   checkIns: { created: CheckIn[]; updated: CheckIn[]; deletedIds: string[] };
+  categories: { created: Category[]; updated: Category[]; deletedIds: string[] };
 }
 interface SyncGateway {
   push(changes: SyncChangeSet): Promise<{ acceptedAt: string }>;
@@ -147,7 +151,7 @@ export async function runSync(): Promise<void> {
   const { data } = await client.auth.getSession();
   if (!data.session) return; // 로그아웃 상태 — lastSyncedAt도 건드리지 않는다
 
-  const engine = new SyncEngine(habitRepository, checkInRepository, new SupabaseSyncGateway(client));
+  const engine = new SyncEngine(habitRepository, checkInRepository, categoryRepository, new SupabaseSyncGateway(client));
   // ...syncNow 호출 후 lastSyncedAt 갱신
 }
 ```
@@ -188,13 +192,13 @@ v1 초반엔 iCloud를 "Apple 생태계 전용이라 Android/Web 확장과 상�
 
 ### 5-2. 스키마/RLS/충돌 해소 설계 (`docs/supabase-schema.sql`)
 
-- `habits`/`check_ins` 테이블에 `user_id` 컬럼을 추가하고 Row Level Security로 `user_id = auth.uid()`인 행만 보이게 격리한다 — 이 앱을 설치한 모든 사람(개인+지인)이 **같은 고정 Supabase 프로젝트를 공유**하므로, 처음부터 사용자별 격리가 필수다.
-- **LWW 충돌 해소는 Postgres 함수(RPC)로 서버에서 원자적으로 처리**한다 — `sync_upsert_habits`/`sync_upsert_check_ins`가 `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE <table>.updated_at < excluded.updated_at`로 "들어오는 값이 더 최신일 때만" 덮어쓰고, 실제로 반영된 id만 반환한다. 클라이언트(`SupabaseSyncGateway`)는 요청한 id 중 반환되지 않은 것을 `conflicts`로 보고한다 — 평범한 `.upsert()` 호출로는 이 정책을 표현할 수 없어 RPC로 옮긴 것.
-- **검증**: 이 SQL은 문서에만 존재하는 게 아니라, 실제로 로컬 Postgres에 `auth.uid()`/`auth.users`를 스텁으로 만들어 6가지 시나리오(최초 insert 수락, 더 오래된 쓰기 거부, 더 최신 쓰기 수락, RLS로 타 사용자 행 격리, RPC가 호출자 본인 명의로만 행을 생성하는지, pull 쿼리가 RLS로 올바르게 스코프되는지)를 **`authenticated`라는 저권한 role로(테이블 소유자로 실행하면 RLS가 우회되므로) 실제로 실행해 전부 통과 확인**했다(`apps/mobile/scripts/supabase-test/`). CloudKit 때는 타입 수준까지만 검증할 수 있었던 것과 달리, 이번엔 핵심 로직 자체를 실행 검증했다.
+- `habits`/`check_ins`/`categories` 테이블에 `user_id` 컬럼을 추가하고 Row Level Security로 `user_id = auth.uid()`인 행만 보이게 격리한다 — 이 앱을 설치한 모든 사람(개인+지인)이 **같은 고정 Supabase 프로젝트를 공유**하므로, 처음부터 사용자별 격리가 필수다.
+- **LWW 충돌 해소는 Postgres 함수(RPC)로 서버에서 원자적으로 처리**한다 — `sync_upsert_habits`/`sync_upsert_check_ins`/`sync_upsert_categories`가 `INSERT ... ON CONFLICT (id) DO UPDATE ... WHERE <table>.updated_at < excluded.updated_at`로 "들어오는 값이 더 최신일 때만" 덮어쓰고, 실제로 반영된 id만 반환한다. 클라이언트(`SupabaseSyncGateway`)는 요청한 id 중 반환되지 않은 것을 `conflicts`로 보고한다 — 평범한 `.upsert()` 호출로는 이 정책을 표현할 수 없어 RPC로 옮긴 것.
+- **검증**: `habits`/`check_ins` 쪽은 실제로 로컬 Postgres에 `auth.uid()`/`auth.users`를 스텁으로 만들어 6가지 시나리오(최초 insert 수락, 더 오래된 쓰기 거부, 더 최신 쓰기 수락, RLS로 타 사용자 행 격리, RPC가 호출자 본인 명의로만 행을 생성하는지, pull 쿼리가 RLS로 올바르게 스코프되는지)를 **`authenticated`라는 저권한 role로(테이블 소유자로 실행하면 RLS가 우회되므로) 실제로 실행해 전부 통과 확인**했다(`apps/mobile/scripts/supabase-test/`). `categories`는 같은 패턴을 그대로 복제한 것이라 로직상 동일하게 동작해야 하지만, 이 로컬 스텁 테스트 스위트로 별도 재검증하지는 않았다 — 실제 배포 전에 Supabase 대시보드에서 두 기기 간 카테고리 push/pull을 한 번 더 직접 확인할 것.
 
 ### 5-3. `SupabaseSyncGateway` (`apps/mobile/src/data/sync/supabase-sync-gateway.ts`)
 
-- 기존 `SyncGateway` 인터페이스를 그대로 구현. `push()`는 위 RPC 두 개를 호출, `pull()`은 `updated_at > since`로 `.select()`한다 — RLS가 자동으로 본인 행만 반환하므로 게이트웨이가 `user_id`를 따로 필터링할 필요가 없다.
+- 기존 `SyncGateway` 인터페이스를 그대로 구현. `push()`는 위 RPC 세 개를 호출, `pull()`은 `updated_at > since`로 `.select()`한다 — RLS가 자동으로 본인 행만 반환하므로 게이트웨이가 `user_id`를 따로 필터링할 필요가 없다. `pull()`이 카테고리를 habits보다 먼저 적용하도록 `SyncEngine`이 순서를 맞춘다 — 그래야 habits의 `categoryId`가 가리키는 카테고리가 그 습관이 로컬에 반영되는 시점에 이미 존재한다.
 - CloudKit 때와 달리 **네이티브 모듈이 아닌 순수 JS 클라이언트**(`@supabase/supabase-js`)라 `Platform.OS` 가드나 동적 import가 필요 없다 — iOS/Android/Web 어디서든 같은 코드 경로.
 - 세션 저장은 `expo-secure-store`가 아니라 `@react-native-async-storage/async-storage`를 쓴다 — SecureStore는 항목당 ~2048바이트 제한이 있어 Supabase 세션(JWT access/refresh token 포함)이 그 한도를 넘기기 쉽고, 이는 Supabase 커뮤니티에서 널리 보고된 이슈다.
 - 로그인은 `@react-native-google-signin/google-signin`(네이티브, Credential Manager 기반)이 아니라 `signInWithOAuth` + `expo-web-browser`의 브라우저 리다이렉트 플로우를 쓴다 — 전자는 커스텀 네이티브 모듈이라 Expo Go에서 동작하지 않아(CloudKit과 같은 종류의 문제) 이 개발 환경에서 검증이 불가능해지므로, Expo Go에서도 그대로 동작하는 후자를 택했다. 실제로 Android 에뮬레이터(Expo Go)에서 새 의존성들이 정상 번들링되고, 로그인 버튼이 (미설정 상태에서) 크래시 없이 올바른 안내 메시지를 띄우는 것까지 확인했다.
@@ -212,6 +216,8 @@ v1 초반엔 iCloud를 "Apple 생태계 전용이라 Android/Web 확장과 상�
 4. Authentication > URL Configuration에서 **Redirect URLs**에 앱의 콜백 주소를 추가(`Linking.createURL("auth-callback")`이 만드는 값 — 실제 빌드에서는 `habittracker://auth-callback`, Expo Go/Dev Client 개발 중엔 `exp://**` 와일드카드). 여기 등록돼 있지 않으면 로그인 후 앱으로 안 돌아오고 기본 Site URL로 리다이렉트되어 실패한다 — Site URL 자체는 와일드카드를 못 쓰므로 `habittracker://`로 바꿔두면 이 실패 케이스를 피할 수 있다.
 5. 프로젝트 URL과 anon(public) key(Supabase 대시보드 Settings > API)를 `apps/mobile/src/constants/supabase.ts`에 채워넣고 빌드.
 6. 같은 Google 계정으로 두 기기에 로그인해 동일한 데이터가 보이는지 확인 — 단일 기기 로그인+마이그레이션은 2026-08-11에 실제 프로젝트로 검증 완료(§5-5), 두 기기 간 동기화 왕복은 아직 미검증.
+
+**스키마가 바뀔 때마다 필요한 작업**: `docs/supabase-schema.sql`은 `create table if not exists`/`create or replace function`/`drop policy if exists` 위주라 **전체를 다시 붙여넣고 실행해도 안전**하다 — 카테고리 동기화 추가(2026-08-11) 때도 새 테이블/정책/RPC가 포함된 파일 전체를 그대로 재실행하는 방식으로 반영한다. 이미 로그인한 기기에 `lastSyncedAt`이 남아있는 상태에서 새 엔티티(카테고리)가 처음 추가되는 경우, 그 기기가 이미 갖고 있던 카테고리들은 `syncStatus: 'pending'`인 채로 로컬에 남아 있으므로 다음 자동 동기화(포그라운드 복귀 등) 때 정상적으로 push된다 — 별도 마이그레이션 스텝이 필요 없다.
 
 ### 5-5. 로컬 개발 환경: Expo Go 대신 로컬 Dev Client 사용
 

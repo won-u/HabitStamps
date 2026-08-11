@@ -45,7 +45,7 @@ function withSyncTrigger<T extends object>(repository: T): T {
 // per entity, so every screen's `observe()` sees every other screen's writes.
 export const habitRepository = withSyncTrigger(new LocalHabitRepository());
 export const checkInRepository = withSyncTrigger(new LocalCheckInRepository());
-export const categoryRepository = new LocalCategoryRepository();
+export const categoryRepository = withSyncTrigger(new LocalCategoryRepository());
 
 /** Client for this app's one fixed Supabase project — see constants/supabase.ts. */
 export function getConfiguredSupabaseClient(): SupabaseClient {
@@ -81,7 +81,7 @@ export async function runSync(): Promise<void> {
     const { data } = await client.auth.getSession();
     if (!data.session) return;
 
-    const engine = new SyncEngine(habitRepository, checkInRepository, new SupabaseSyncGateway(client));
+    const engine = new SyncEngine(habitRepository, checkInRepository, categoryRepository, new SupabaseSyncGateway(client));
     const since = useSettingsStore.getState().lastSyncedAt ?? new Date(0).toISOString();
     const result = await engine.syncNow(since);
     useSettingsStore.getState().setLastSyncedAt(result.serverTime);
