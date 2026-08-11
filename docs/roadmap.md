@@ -31,28 +31,33 @@
 
 **사용자 액션 대기 중**: 없음 — Supabase 동기화까지 실제 검증 완료.
 
+## 2026-08-11 업데이트 (2차): 동기화 단순화 — Google 로그인 단일화 + 자동 동기화 + REST 백엔드 제거
+
+개인용으로 시작했지만 지인들도 같이 쓸 수 있게 배포할 계획이 확정되면서, 자체 서버 운영이 필요 없는 방향으로 동기화를 다시 단순화했다.
+
+- **REST 백엔드 완전 제거**: `apps/backend`, `docker-compose.yml`, `RestSyncGateway`, `apps/mobile/scripts/verify-sync-engine.ts` 삭제. 히스토리는 [architecture.md](./architecture.md) §4 참고.
+- **Supabase 프로젝트를 앱에 고정**: 프로젝트 URL/anon key를 `apps/mobile/src/constants/supabase.ts`에 하드코딩 — 사용자가 설정 화면에 값을 입력할 필요가 없어졌다. 이 앱을 설치하는 모두(개인+지인)가 같은 프로젝트를 공유하고, RLS가 Google 계정 기준으로 데이터를 격리한다.
+- **설정 화면 단순화**: `사용 안 함/REST 백엔드/Supabase` 3단 선택과 URL/토큰 입력 필드, "지금 동기화" 버튼을 모두 없애고 "Google로 로그인" 버튼 하나만 남겼다.
+- **자동 동기화 도입**(`composition/container.ts`의 `runSync`/`scheduleSync`): 로그인 직후(로컬 데이터 마이그레이션 겸용), 앱 실행/포그라운드 복귀 시, 습관·체크인 로컬 변경 후 ~1.5초 디바운스 — 이 세 트리거가 전부 같은 `runSync()`를 호출한다. 새 마이그레이션 알고리즘은 필요 없었다 — 로그인 전 로컬 데이터는 이미 `syncStatus: 'pending'`이라 `syncNow()`가 기존 로직 그대로 전부 밀어올린다. (처음엔 별도 `features/sync/auto-sync.ts` 파일로 분리했다가, `container.ts`와의 순환 참조 때문에 Metro에서 `scheduleSync`가 조용히 미해결 상태로 남는 버그가 있어 한 파일로 합쳤다.) 상세 설계는 [architecture.md](./architecture.md) §5-3 참고.
+
 ## 구현 단계
 
-1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화), `apps/backend`(Fastify 초기화), 루트 `docker-compose.yml`.
+1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*
 2. ✅ **로컬 도메인 계층**: Drizzle 스키마(Habit/CheckIn/Category, 동기화 필드 포함) + 마이그레이션, LocalRepository 구현체, 반응형 `observe*()` 구독. *(Reminder는 스키마/모델만, 로컬 구현체는 아직 없음)*
 3. ✅ **핵심 UI 루프**: 오늘 화면(체크인 애니메이션 포함) → 습관 추가/수정 폼 → 캘린더 뷰. 이 시점에 로컬 전용으로 "매일 쓸 수 있는" 앱이 완성됨. *(온보딩은 미구현으로 남음)*
 4. **통계/Journal/설정/알림**: 통계 요약 화면과 설정 화면은 ✅ 완료. Journal 세그먼트·알림 스케줄링(`expo-notifications`)·데이터 백업/복원은 ❌ 아직 미구현.
-5. ✅ **백엔드 모듈**: `apps/backend` 라우트(`/habits`, `/checkins`, `/sync/push`, `/sync/pull`) 구현, Drizzle+Postgres 스키마/마이그레이션, 인증 플러그인(고정 토큰).
-6. ✅ **동기화 연결**: `RestSyncGateway`/`SyncEngine` 구현, 설정 화면에 동기화 섹션 추가, 로컬 검증 절차 수행(architecture.md 4-5) — Android 에뮬레이터 기준 두 클라이언트 간 push/pull 왕복 확인 완료.
-7. ✅ **DayStamps 참조 리디자인 + 기능 확장** (v1.5, 반복 진행): UI/UX 리디자인, 그룹 기능, 반복주기 확장(월 n회), 통계 탭(요약 | Weekly | Monthly | Yearly 세그먼트로 통합) — 상세는 위 "현재 진행 상황"/"2026-08-11 업데이트" 참고.
-8. ✅ **Supabase 동기화 추가**: `SupabaseSyncGateway` + Google 로그인 구현·로직 검증·실제 프로젝트 연동까지 완료.
+5. ✅ **DayStamps 참조 리디자인 + 기능 확장** (v1.5, 반복 진행): UI/UX 리디자인, 그룹 기능, 반복주기 확장(월 n회), 통계 탭(요약 | Weekly | Monthly | Yearly 세그먼트로 통합) — 상세는 위 "현재 진행 상황"/"2026-08-11 업데이트" 참고.
+6. ✅ **Supabase 동기화**: `SupabaseSyncGateway` + Google 로그인 구현·실제 프로젝트 연동·자동 동기화 트리거까지 완료. REST 백엔드는 최종적으로 걷어내고 이 경로 하나로 통합(위 "동기화 단순화" 참고).
 
 ## 검증 방법 (End-to-End)
 
 - ✅ **로컬 전용 동작**: 습관 생성 → 체크인 → 앱 재시작 후 데이터 유지 확인(SQLite 영속성) → 캘린더/통계 숫자 정합성(수동 계산과 대조) — Android 에뮬레이터에서 확인.
 - ❌ **알림**: 리마인더 스케줄링 자체가 아직 없어 검증 대상 아님(§ 위 "아직 안 한 것" 참고).
-- ✅ **백엔드 단독**: `docker compose up -d` 후 `curl`로 CRUD/sync 엔드포인트 직접 호출해 응답 스키마 확인.
-- ✅ **엔드투엔드 동기화**: architecture.md 4-5절의 9단계 절차(두 클라이언트 간 push/pull 왕복)를 독립 Node 스크립트와 실제 앱 UI 양쪽으로 수행, 통과 확인.
+- ✅ **Supabase 동기화**: 로그인 시 마이그레이션, 로컬 변경 후 자동 push, 포그라운드 복귀 시 자동 pull — Android 에뮬레이터(태블릿+폰 두 대)에서 확인.
 - ⏳ **iOS 검증**: Mac 환경이 없어 아직 수행하지 못함 — 향후 Mac 확보 시 최우선 재검증 대상.
 
 ## 향후 확장 (v2 이후, 참고용)
 
-- 실사용자 인증(계정 시스템)을 포함한 프로덕션 동기화로 전환 (`plugins/auth.ts`의 고정 토큰 → JWT/OAuth 교체).
 - Web(Next.js) 클라이언트 추가 — `packages/core`의 도메인 타입/Repository 인터페이스 재사용.
 - iOS WidgetKit / Android 위젯 — 네이티브 확장 필요, RN만으로는 구현 불가.
 - AI 습관 추천, Apple Watch/visionOS 연동, 체크인 사진 첨부, 통계 고도화.
