@@ -87,12 +87,7 @@ export default function HabitDetailScreen() {
       setSelectedDate(dateStr);
       return;
     }
-    const existing = await checkInRepository.getByHabitAndDate(habit.id, dateStr);
-    if (existing) {
-      await checkInRepository.softDelete(existing.id);
-    } else {
-      await checkInRepository.create({ habitId: habit.id, date: dateStr, completedAt: new Date().toISOString() });
-    }
+    await checkInRepository.toggle(habit.id, dateStr);
   }
 
   if (!habit) return null;

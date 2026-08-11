@@ -40,6 +40,14 @@
 - **설정 화면 단순화**: `사용 안 함/REST 백엔드/Supabase` 3단 선택과 URL/토큰 입력 필드, "지금 동기화" 버튼을 모두 없애고 "Google로 로그인" 버튼 하나만 남겼다.
 - **자동 동기화 도입**(`composition/container.ts`의 `runSync`/`scheduleSync`): 로그인 직후(로컬 데이터 마이그레이션 겸용), 앱 실행/포그라운드 복귀 시, 습관·체크인 로컬 변경 후 ~1.5초 디바운스 — 이 세 트리거가 전부 같은 `runSync()`를 호출한다. 새 마이그레이션 알고리즘은 필요 없었다 — 로그인 전 로컬 데이터는 이미 `syncStatus: 'pending'`이라 `syncNow()`가 기존 로직 그대로 전부 밀어올린다. (처음엔 별도 `features/sync/auto-sync.ts` 파일로 분리했다가, `container.ts`와의 순환 참조 때문에 Metro에서 `scheduleSync`가 조용히 미해결 상태로 남는 버그가 있어 한 파일로 합쳤다.) 상세 설계는 [architecture.md](./architecture.md) §5-3 참고.
 
+## 2026-08-11 버그 수정: 체크인 중복 생성 (레이스 컨디션)
+
+실사용 중 "제라도 301EXX"(주 3회 목표) 습관이 "26/3"으로 표시되고, 체크된 날짜를 해제해도 가끔 반영되지 않는 문제가 보고됐다. Supabase 대시보드에서 해당 습관의 `check_ins` row를 날짜순으로 조회해보니, 특정 날짜(당시 테스트하던 날짜들)에 활성(`deleted_at is null`) row가 최대 19개까지 쌓여 있었고, 각 row의 `created_at`이 100~500ms 간격으로 촘촘히 몰려 있었다.
+
+- **근본 원인**: `use-today.ts`와 습관 상세 캘린더(`habit/[id]/index.tsx`)의 체크인 토글이 `getByHabitAndDate`(읽기) → `create`/`softDelete`(쓰기) 두 단계로 구현돼 있었는데, 그 사이에 잠금이 없었다. 같은 (habit, date)에 대해 토글이 짧은 간격으로 두 번 이상 겹쳐 호출되면(연속 탭, 혹은 이번 세션 중 진행한 ADB 자동화 탭 테스트), 나중 호출이 앞선 호출의 `create()`가 커밋되기 전에 `getByHabitAndDate`를 실행해 "아직 없음"으로 오판하고 또 새 row를 만들었다. 해제 시에는 `getByHabitAndDate`가 `.limit(1)`이라 여러 활성 row 중 하나만 지워져, 나머지가 계속 "체크됨"으로 남았다.
+- **수정**: `CheckInRepository`에 원자적 `toggle(habitId, date)` 메서드를 추가(`packages/core`의 인터페이스 + `LocalCheckInRepository` 구현)하고, 기존 두 호출부를 모두 이걸로 교체했다. `LocalCheckInRepository.toggle`은 (habitId, date) 키별 in-memory 락으로 겹치는 호출을 직렬화하고, 해제 시에는 활성 row를 전부(과거 레이스로 이미 쌓인 중복 포함) soft-delete하도록 만들어 자체 치유가 되게 했다. 더 이상 쓰이지 않게 된 `getByHabitAndDate`는 인터페이스/구현에서 함께 제거.
+- **서버·로컬에 이미 쌓인 중복 데이터 정리**: 코드 수정만으로는 과거에 생긴 중복 row가 없어지지 않으므로, Supabase SQL Editor에서 실행한 정리 스크립트로 habit_id+date별 가장 먼저 생성된 row만 남기고 나머지를 soft-delete, `updated_at`을 갱신했다(사용자가 직접 실행·완료). LWW 규칙상 서버 `updated_at`이 더 최신이면 로컬을 덮어쓰므로, 각 기기가 다음 pull 때 자동으로 동일하게 정리된다 — 별도 로컬 정리 스크립트는 불필요했다.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*
