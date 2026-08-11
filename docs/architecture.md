@@ -268,8 +268,18 @@ v1 초반엔 iCloud를 "Apple 생태계 전용이라 Android/Web 확장과 상�
 1. [supabase.com](https://supabase.com)에서 무료 프로젝트 생성.
 2. 프로젝트의 SQL Editor에 `docs/supabase-schema.sql` 전체를 붙여넣고 실행.
 3. Authentication > Providers에서 Google 활성화 — Google Cloud Console에서 OAuth 클라이언트를 만들고 Client ID/Secret을 등록, Redirect URI는 Supabase가 제공하는 `https://<project>.supabase.co/auth/v1/callback`로 설정.
-4. 앱의 설정 > 동기화 > Supabase에서 프로젝트 URL과 anon(public) key(둘 다 Supabase 대시보드 Settings > API에 있음)를 입력, "Google로 로그인" 후 "지금 동기화".
-5. 두 번째 기기에서 같은 Google 계정으로 로그인하면 동일한 데이터가 보이는지 확인 — 이 마지막 왕복 검증은 실제 Supabase 프로젝트가 있어야 하므로 사용자가 직접 수행해야 한다(§5-2에서 로직 자체는 이미 검증됨).
+4. Authentication > URL Configuration에서 **Redirect URLs**에 앱의 콜백 주소를 추가(`Linking.createURL("auth-callback")`이 만드는 값 — 개발 중엔 `exp://<metro-ip>:8081/--/auth-callback` 또는 와일드카드 `exp://**`, 실제 빌드에서는 `habittracker://auth-callback`). 여기 등록돼 있지 않으면 로그인 후 앱으로 안 돌아오고 기본 Site URL(신규 프로젝트 기본값 `http://localhost:3000`)로 리다이렉트되어 실패한다 — Site URL 자체는 와일드카드를 못 쓰므로 `habittracker://`처럼 앱 스킴으로 바꿔두면 이 실패 케이스를 피할 수 있다.
+5. 앱의 설정 > 동기화 > Supabase에서 프로젝트 URL과 anon(public) key(둘 다 Supabase 대시보드 Settings > API에 있음)를 입력, "Google로 로그인" 후 "지금 동기화".
+6. 두 번째 기기에서 같은 Google 계정으로 로그인하면 동일한 데이터가 보이는지 확인 — 단일 기기 로그인 왕복은 2026-08-11에 사용자가 실제 프로젝트로 검증 완료(§5-5), 두 기기 간 동기화 왕복은 아직 미검증.
+
+### 5-5. 로컬 개발 환경: Expo Go 대신 로컬 Dev Client 사용
+
+2026-08-11 기준, 이 프로젝트 개발에 쓰는 Android 에뮬레이터에서는 범용 Expo Go 앱 대신 **이 프로젝트 전용 로컬 Dev Client**(`expo run:android`로 빌드)를 쓴다. 이유:
+
+- Expo Go 57.0.3(SDK 57 "권장" 버전)은 이 에뮬레이터에서 앱 실행 직후 Hermes VM이 즉시 `SIGSEGV`로 죽는다 — Supabase 관련 코드와 무관하게 스캐폴딩 단계 커밋만으로도 재현되는, Expo Go 클라이언트 자체의 문제.
+- 캐시된 Expo Go 57.0.2로 다운그레이드하면 크래시는 피하지만, 이번엔 `@react-native-async-storage/async-storage`의 네이티브 모듈이 불안정해져(`Native module is null, cannot access legacy storage`) Supabase 세션 저장에 영향을 줄 수 있다.
+- 두 문제 모두 "이 프로젝트의 의존성 버전과 Expo Go라는 사전 빌드된 범용 바이너리가 미묘하게 안 맞는" 유형의 문제라, Expo Go 자체를 버리고 `expo run:android`로 이 프로젝트만의 네이티브 앱(Dev Client)을 로컬 빌드하는 쪽으로 전환했다 — 실제 배포 빌드(EAS Build)와 동일하게 `package.json`에 고정된 버전 그대로 컴파일되므로 두 문제 모두 재발하지 않는다.
+- 최초 빌드 시 Gradle이 NDK/CMake/빌드 도구를 자동 설치하고, 이 과정에서 Metro의 파일 워처가 시스템 inotify 한도(`fs.inotify.max_user_watches`)를 넘겨 죽을 수 있다 — `sudo sysctl fs.inotify.max_user_watches=524288`로 올려서 해결.
 
 ---
 

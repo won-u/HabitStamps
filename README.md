@@ -10,7 +10,7 @@ iOS 앱 [DayStamps](https://apps.apple.com/) 를 레퍼런스로 만든 개인�
 
 ## 현재 상태 요약
 
-로컬 전용 핵심 루프(습관 생성/체크인/캘린더/리포트)와 로컬 백엔드 push/pull 동기화까지 **Android 에뮬레이터에서 end-to-end 검증 완료**. Supabase 동기화(RLS/LWW 충돌 해소 로직)는 로컬 Postgres로 검증했지만 실제 Supabase 프로젝트 연동은 사용자가 직접 확인 필요(docs/architecture.md §5-4). iOS 재검증은 Mac 환경 확보 후 진행 예정. 남은 v1 항목(체크인 메모 UI, 리마인더 알림, 백업/복원, 온보딩 등)은 [docs/roadmap.md](./docs/roadmap.md#현재-진행-상황-2026-07-29-기준)에 정리되어 있다.
+로컬 전용 핵심 루프(습관 생성/체크인/캘린더/통계)와 로컬 백엔드 push/pull 동기화, Supabase 동기화(로그인 왕복 포함)까지 **Android 에뮬레이터에서 end-to-end 검증 완료**. iOS 재검증은 Mac 환경 확보 후 진행 예정. 남은 v1 항목(체크인 메모 UI, 리마인더 알림, 백업/복원, 온보딩 등)은 [docs/roadmap.md](./docs/roadmap.md)에 정리되어 있다.
 
 ## 구조
 
@@ -53,9 +53,11 @@ curl http://localhost:4000/api/v1/habits          # 200 + 빈 배열이면 정�
 ```bash
 pnpm mobile:start          # Expo dev server
 # 또는
-pnpm --filter @habit-tracker/mobile android   # Android 에뮬레이터
+pnpm --filter @habit-tracker/mobile android   # Android 에뮬레이터(Expo Go)
 pnpm --filter @habit-tracker/mobile ios       # iOS 시뮬레이터 (Mac 필요)
 ```
+
+일부 개발 환경에서는 Expo Go 클라이언트가 프로젝트 의존성과 미묘하게 안 맞아 크래시가 날 수 있다(겪었던 사례와 원인은 [docs/architecture.md](./docs/architecture.md) §5-5). 이런 경우 `npx expo run:android`로 이 프로젝트 전용 로컬 Dev Client를 빌드해 Expo Go 대신 쓴다 — 최초 빌드만 시간이 걸리고, 이후엔 Metro만 재시작하면 된다.
 
 동기화를 테스트하려면 앱의 **설정 > 동기화**에서 `REST 백엔드`를 선택하고 Sync Server URL/Device Token을 입력한다.
 - Android 에뮬레이터에서 호스트 PC를 가리킬 때는 `localhost` 대신 `http://10.0.2.2:4000` 사용.
@@ -68,7 +70,7 @@ pnpm --filter @habit-tracker/mobile ios       # iOS 시뮬레이터 (Mac 필요)
 1. 오늘 화면에서 `+` 버튼으로 습관 생성(이름/아이콘/컬러/그룹/반복주기).
 2. 습관 카드의 체크 원을 탭해 오늘 체크인. 헤더 날짜를 탭하면 다른 날짜로 이동해 체크할 수 있다.
 3. 습관 카드를 탭하면 상세 화면(월간 스탬프 캘린더, 스트릭)으로 이동.
-4. 오늘 화면 헤더의 막대그래프 아이콘 → Weekly/Monthly/Yearly 리포트.
+4. 오늘 화면 헤더의 막대그래프 아이콘 또는 하단 탭의 통계 → 요약/Weekly/Monthly/Yearly.
 5. 설정 화면에서 REST 백엔드 또는 Supabase 동기화를 연결하면 다른 기기와 데이터를 주고받을 수 있다(수동 동기화).
 
 ## 설정(환경변수)
