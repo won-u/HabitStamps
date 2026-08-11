@@ -67,10 +67,10 @@ function rowToCheckIn(row: CheckInRow): CheckIn {
 }
 
 /**
- * Syncs via a Supabase project (Postgres + Auth + RLS) instead of
- * apps/backend — see docs/architecture.md §5. Works identically on
- * iOS/Android/web (pure JS client, no native module), unlike the CloudKit
- * path this replaced which was iOS-only.
+ * Syncs via this app's one fixed Supabase project (Postgres + Auth + RLS) —
+ * see docs/architecture.md §5. Works identically on iOS/Android/web (pure JS
+ * client, no native module), unlike the CloudKit path this replaced which was
+ * iOS-only.
  *
  * The RLS policies in docs/supabase-schema.sql scope every row to
  * `auth.uid()`, so `pull()`'s plain `.select()` only ever returns the signed-in
