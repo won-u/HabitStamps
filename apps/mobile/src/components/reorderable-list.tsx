@@ -154,6 +154,7 @@ function DraggableRow<T>({
 }: DraggableRowProps<T>) {
   const translateY = useSharedValue(0);
   const dragStartOffsetY = useSharedValue(0);
+  const hasActivated = useSharedValue(false);
 
   // Recomputed on every render from plain JS state (heights/order), not a
   // shared value — this only needs to update when React re-renders (a row
@@ -192,6 +193,7 @@ function DraggableRow<T>({
     .activateAfterLongPress(LONG_PRESS_DURATION_MS)
     .enabled(!disabled)
     .onStart(() => {
+      hasActivated.value = true;
       runOnJS(handleStart)();
     })
     .onUpdate((event) => {
@@ -202,10 +204,19 @@ function DraggableRow<T>({
     // cancelled/interrupted instead of ending normally (e.g. an odd event
     // sequence, the app backgrounding mid-drag) — otherwise a drag that never
     // reaches onEnd leaves activeKey stuck forever, which also blocks the
-    // list from ever re-syncing with fresh data again.
+    // list from ever re-syncing with fresh data again. But onFinalize fires
+    // for EVERY gesture attempt, including a plain quick tap that never
+    // activated (activateAfterLongPress just means it never got past the
+    // long-press wait) — without the hasActivated guard, committing
+    // unconditionally here reassigned every habit's sortOrder on every
+    // checkbox tap (found via a web IndexedDB dump showing the habit's own
+    // updatedAt bumping on a check-in toggle that never touched the habit).
     .onFinalize(() => {
       translateY.value = withSpring(0, { duration: 200 });
-      runOnJS(onDragEnd)();
+      if (hasActivated.value) {
+        hasActivated.value = false;
+        runOnJS(onDragEnd)();
+      }
     });
 
   const animatedStyle = useAnimatedStyle(() => {

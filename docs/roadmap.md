@@ -106,6 +106,17 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 - **버그 3 (가장 까다로웠던 것)**: 그룹을 재정렬해도 화면이 갱신되지 않고 이전 순서를 계속 보여줬다 — DB에는 새 순서가 정확히 저장되는데도 그랬다. 원인은 `ReorderableList`의 재동기화 로직이 "키 시퀀스가 같으면 아무것도 안 한다"였던 것: 그룹 자체의 key(카테고리 id)는 습관 순서가 바뀌어도 그대로이므로 "같다"고 판단해 그룹의 새 `items` 내용을 절대 안 받아들이고 있었다. 키 시퀀스는 로컬 상태 그대로 유지하되, 각 항목의 실제 객체는 항상 최신 `data`에서 다시 가져오도록 수정.
 - 태블릿+폰 두 기기 모두에서 습관 재정렬/그룹 재정렬 각각 실기기(에뮬레이터) 드래그로 검증 — 재정렬 직후 화면 즉시 반영, DB에 정확한 `sortOrder` 저장, 앱 재시작 후에도 유지되는 것까지 확인. `sortOrder`는 다른 필드처럼 그대로 동기화되므로, 한 기기에서 재정렬하면 다른 기기에도 그 순서가 그대로 전파된다.
 
+## 2026-08-11 기능 추가: 웹 빌드용 IndexedDB 저장소 (PWA 준비)
+
+아이폰에서 Xcode 무료 서명(7일마다 재설치 필요)이 번거로워, PWA 방향을 검토하던 중 "로그인 필수로 하면 로컬 DB 자체가 필요 없지 않냐"는 질문이 나왔다가, 오프라인 사용이 실제로 필요하다는 결론으로 다시 로컬 우선(local-first) 구조를 웹에도 유지하기로 했다.
+
+- 이 프로젝트는 Expo Router 기반이라 별도 웹앱 없이 `expo start --web`/`expo export -p web`으로 같은 코드베이스가 웹 빌드로 나온다. 웹엔 `expo-sqlite`가 없으므로 `apps/mobile/src/data/local/*-repository.web.ts` 세 개(habit/check-in/category)를 IndexedDB(`idb` 라이브러리) 기반으로 새로 구현 — Metro의 플랫폼별 파일 확장자 해석(`*.web.ts`가 웹에서 우선 매칭)을 이용해 `composition/container.ts`를 비롯한 기존 코드는 한 줄도 안 바꿨다. 상세 설계는 `docs/architecture.md` §3-4 참고.
+- `SyncEngine`/`SyncGateway`/충돌 해소 로직은 저장소를 가리지 않게 이미 설계돼 있어서 100% 그대로 재사용 — 웹에서도 Supabase 로그인·자동 동기화가 그대로 동작한다.
+- `_layout.tsx`가 SQLite 전용 `useMigrations`를 직접 부르지 않도록 `use-db-ready.ts`(네이티브)/`use-db-ready.web.ts`(웹)로 분리 — 웹 빌드가 Drizzle 마이그레이션 코드를 아예 번들하지 않게 했다.
+- **검증**: 이 환경엔 GUI 브라우저가 없어서 Playwright+Chromium을 새로 설치해 헤드리스로 검증했다 — 습관 생성 → 체크인 토글 → 페이지 새로고침까지 실제 웹 페이지에서 수행하고, `indexedDB`를 직접 열어 새로고침 전후 데이터가 동일하게 남아있는 것을 확인. 오늘 화면 드래그 재정렬도 실제 마우스 이벤트(`mousedown` → 350ms 대기 → `mousemove` → `mouseup`)로 재현해 웹에서 동일하게 동작함을 확인했다.
+- **이 검증 중 발견한 버그(플랫폼 무관, 안드로이드에도 있던 버그)**: `ReorderableList`의 제스처가 실제로 활성화 안 된 일반 탭에서도 `onFinalize`가 호출되면서 `onReorder`가 매번 실행되고 있었다 — 체크인 토글처럼 드래그와 무관한 탭마다 모든 습관의 `sortOrder`가 불필요하게 재저장되는 부작용이 있었다. IndexedDB 전후 스냅샷 비교로 습관의 `updatedAt`/`version`이 체크인 토글 때마다 같이 바뀌는 걸 보고 발견 — `onStart`에서만 세우는 `hasActivated` 플래그로 실제 드래그가 시작된 경우에만 커밋하도록 수정.
+- 안드로이드 에뮬레이터에서도 재확인해 이번 변경으로 인한 회귀가 없는 것 확인.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*

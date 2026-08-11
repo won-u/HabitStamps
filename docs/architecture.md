@@ -53,7 +53,8 @@ habit-tracker/
             ├── constants/          # theme.ts, supabase.ts(고정 프로젝트 URL/anon key)
             ├── data/
             │   ├── local/          # drizzle schema.ts, migrations/, sqlite client
-            │   ├── local/*-repository.ts  # LocalHabitRepository 등 구현체
+            │   ├── local/*-repository.ts      # LocalHabitRepository 등 구현체 — 네이티브(SQLite)
+            │   ├── local/*-repository.web.ts  # 같은 이름, 웹 빌드 전용(IndexedDB) — §3-4
             │   ├── supabase/       # client.ts, auth.ts (Google 로그인)
             │   └── sync/           # SupabaseSyncGateway, SyncEngine
             ├── state/              # zustand store (외관/lastSyncedAt만 — 동기화 설정은 더 이상 없음)
@@ -142,7 +143,7 @@ interface SyncGateway {
 }
 ```
 
-UI/usecase는 `HabitRepository` 인터페이스에만 의존한다. v1은 `LocalHabitRepository`(Drizzle) 하나만 존재하고, Sync는 이 Repository의 upsert 메서드를 통해서만 로컬 DB에 반영되는 **완전히 별도 계층**이다.
+UI/usecase는 `HabitRepository` 인터페이스에만 의존한다. 네이티브(iOS/Android)는 `LocalHabitRepository`(Drizzle+SQLite), 웹 빌드는 같은 이름의 IndexedDB 구현체(§3-4)를 쓴다. Sync는 이 Repository의 upsert 메서드를 통해서만 로컬 DB에 반영되는 **완전히 별도 계층**이라, 저장소가 어느 쪽이든 SyncEngine/SyncGateway 코드는 한 글자도 안 바뀐다.
 
 **어댑터 스위칭(Composition Root, `apps/mobile/src/composition/container.ts` 실제 구현)**:
 ```typescript
@@ -158,6 +159,17 @@ export async function runSync(): Promise<void> {
 과거엔 설정 화면에서 `사용 안 함 / iCloud / REST 백엔드` 여러 모드를 사용자가 직접 선택했지만, 2026-08-11부터는 **선택지가 아니라 로그인 여부**로 결정된다 — 로그인 안 했으면 `runSync()`가 아무것도 하지 않고 즉시 반환하고, 로그인했으면 `SupabaseSyncGateway`로 동기화한다. 어느 프로젝트로 동기화할지도 더 이상 설정값이 아니라 `constants/supabase.ts`에 고정되어 있다. 자세한 트리거 지점(로그인 직후/로컬 변경 직후/포그라운드 복귀 시)은 §5-3 참고.
 
 과거엔 로그아웃 상태에서 `NoopSyncGateway`(push/pull이 아무 일도 안 하지만 `pull()`이 `serverTime: new Date().toISOString()`을 반환)를 통해 `SyncEngine`을 그대로 태웠는데, 이 결과값을 `runSync()`가 그대로 `lastSyncedAt`에 저장해버려서 **로그아웃 상태에서의 매 포그라운드 동기화마다 `lastSyncedAt`이 "지금"으로 계속 갱신**되는 버그가 있었다. 그러면 실제로 로그인한 시점엔 이미 `lastSyncedAt`이 최근 값이라, 로그인 직후 pull이 `updated_at > lastSyncedAt` 조건으로 서버에 이미 있던 습관/체크인을 전부 걸러버려 "로그인해도 동기화가 안 되는" 것처럼 보였다. 지금은 `runSync()`가 로그아웃 상태면 `lastSyncedAt`을 건드리지 않고 즉시 반환하므로, 로그인 시점의 `lastSyncedAt`은 진짜 "마지막으로 실제 동기화한 시각"(최초 로그인이면 여전히 없음 → epoch)만 반영한다.
+
+### 3-4. 웹 빌드 전용 로컬 저장소 — IndexedDB
+
+이 프로젝트는 Expo Router 기반이라 `expo start --web` / `expo export -p web`으로 같은 코드베이스가 그대로 웹 빌드로 나온다(별도 Next.js 앱이 필요 없음). 다만 웹에는 `expo-sqlite`가 없으므로, `apps/mobile/src/data/local/*-repository.web.ts`가 IndexedDB(`idb` 라이브러리로 얇게 래핑) 기반의 같은 이름 구현체를 제공한다.
+
+- **적용 방식**: Metro/Expo의 플랫폼별 파일 확장자 해석(`*.web.ts`가 웹 빌드에서 확장자 없는 `*.ts`보다 우선 매칭됨)을 그대로 이용 — `composition/container.ts`를 비롯해 이 Repository들을 import하는 어떤 코드도 플랫폼 분기 없이 그대로 동작한다. 바뀌는 건 어떤 파일이 번들에 들리느냐뿐이다.
+- **DB 초기화도 플랫폼별로 분리**: `_layout.tsx`가 직접 `useMigrations`(Drizzle/SQLite 전용 API)를 부르는 대신 `data/local/use-db-ready.ts`(네이티브)/`use-db-ready.web.ts`(웹, `indexedDB.open` 프라미스를 기다림)를 통해 "DB 준비 완료" 여부만 받는다 — 웹 빌드가 SQLite 마이그레이션 코드를 아예 참조/번들하지 않게 하기 위해서다.
+- **스키마**: `habits`/`check_ins`/`categories` 세 오브젝트 스토어, 각각 `id`를 keyPath로 하고 `syncStatus`(전부)와 `habitId`/`date`(체크인만) 인덱스를 둔다. `frequencyConfig` 같은 중첩 객체는 SQLite처럼 JSON 문자열로 직렬화할 필요 없이 구조화 복제(structured clone)로 그대로 저장된다.
+- **`toggle()` 등 도메인 로직은 그대로 이식**: 체크인의 원자적 `toggle(habitId, date)`(§ roadmap.md 2026-08-11 체크인 중복 버그 수정 참고)도 같은 in-memory 락 패턴을 IndexedDB 버전에 그대로 복제했다 — 저장소가 바뀌어도 동시성 버그의 성격은 같기 때문.
+- **검증**: Playwright + Chromium으로 실제 브라우저에서 습관 생성 → 체크인 토글 → 페이지 새로고침까지 수행하고, `indexedDB`를 직접 열어 데이터가 정확히 남아있는지 확인 — 새로고침 전후 데이터가 동일하게 유지되는 것으로 영속성 검증 완료. 오늘 화면의 드래그 재정렬(§5 이전, `components/reorderable-list.tsx`)도 마우스 이벤트(`mousedown` → 350ms 대기 → `mousemove` → `mouseup`)로 재현해 웹에서도 동일하게 동작함을 확인했다.
+- **이 테스트 중 발견한 버그(플랫폼 무관)**: `ReorderableList`의 제스처가 실제로 활성화되지 않은 일반 탭에서도 `onFinalize`가 호출되어 `onReorder`가 매번 실행되고 있었다 — 체크인 토글 같은 무관한 탭마다 모든 습관의 `sortOrder`가 불필요하게 재저장되는 부작용이 있었다(습관의 `updatedAt`/`version`이 체크인 토글 때마다 같이 바뀌는 것으로 발견). `onStart`에서만 세우는 `hasActivated` 플래그로 실제 드래그가 시작된 경우에만 커밋하도록 수정.
 
 ---
 

@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useMigrations } from 'drizzle-orm/expo-sqlite/migrator';
 import { AppState, type AppStateStatus, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { useFonts } from 'expo-font';
@@ -12,12 +11,10 @@ import {
   NotoSansKR_700Bold,
 } from '@expo-google-fonts/noto-sans-kr';
 
-import { db } from '@/data/local/client';
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
 import { runSync } from '@/composition/container';
-// eslint-disable-next-line import/no-relative-parent-imports -- drizzle-kit generates this file at the project root, outside src/
-import migrations from '../../drizzle/migrations';
+import { useDbReady } from '@/data/local/use-db-ready';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -40,7 +37,7 @@ function useAutoSyncOnForeground() {
 }
 
 export default function RootLayout() {
-  const { success, error } = useMigrations(db, migrations);
+  const { ready, error } = useDbReady();
   const [fontsLoaded, fontError] = useFonts({
     NotoSansKR_400Regular,
     NotoSansKR_500Medium,
@@ -51,22 +48,22 @@ export default function RootLayout() {
   useAutoSyncOnForeground();
 
   useEffect(() => {
-    if ((success || error) && (fontsLoaded || fontError)) {
+    if ((ready || error) && (fontsLoaded || fontError)) {
       SplashScreen.hideAsync();
     }
-  }, [success, error, fontsLoaded, fontError]);
+  }, [ready, error, fontsLoaded, fontError]);
 
   if (error) {
     return (
       <GestureHandlerRootView style={styles.flex}>
         <View style={styles.center}>
-          <ThemedText>DB 마이그레이션 오류: {error.message}</ThemedText>
+          <ThemedText>DB 초기화 오류: {error}</ThemedText>
         </View>
       </GestureHandlerRootView>
     );
   }
 
-  if (!success || !(fontsLoaded || fontError)) {
+  if (!ready || !(fontsLoaded || fontError)) {
     return null;
   }
 
