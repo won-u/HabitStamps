@@ -19,21 +19,54 @@ function toCheckIn({ syncStatus: _syncStatus, ...rest }: CheckInRow): CheckIn {
 
 export class LocalCheckInRepository implements CheckInRepository {
   private readonly changes = new ObservableSet<readonly CheckIn[]>();
+  private readonly toggleLocks = new Map<string, Promise<unknown>>();
 
   async getById(id: string): Promise<CheckIn | null> {
     const [row] = await db.select().from(checkIns).where(eq(checkIns.id, id)).limit(1);
     return row ? toCheckIn(row) : null;
   }
 
-  async getByHabitAndDate(habitId: string, date: string): Promise<CheckIn | null> {
-    const [row] = await db
+  /**
+   * Serializes toggles for the same (habitId, date) so a rapid repeat call
+   * (double tap, animation re-fire) waits for the prior one to finish instead
+   * of racing it — see the interface doc comment for why the naive
+   * read-then-write sequence corrupts data.
+   */
+  async toggle(habitId: string, date: string): Promise<CheckIn | null> {
+    const key = `${habitId}:${date}`;
+    const prior = this.toggleLocks.get(key) ?? Promise.resolve();
+    const run = prior.then(
+      () => this.toggleOnce(habitId, date),
+      () => this.toggleOnce(habitId, date),
+    );
+    this.toggleLocks.set(
+      key,
+      run.catch(() => undefined),
+    );
+    return run;
+  }
+
+  private async toggleOnce(habitId: string, date: string): Promise<CheckIn | null> {
+    const rows = await db
       .select()
       .from(checkIns)
-      .where(and(eq(checkIns.habitId, habitId), eq(checkIns.date, date)))
-      .limit(1);
-    // A soft-deleted check-in for the same day should not count as "already checked in".
-    if (!row || row.deletedAt) return null;
-    return toCheckIn(row);
+      .where(and(eq(checkIns.habitId, habitId), eq(checkIns.date, date)));
+    const active = rows.filter((row) => !row.deletedAt);
+    if (active.length === 0) {
+      return this.create({ habitId, date, completedAt: new Date().toISOString() });
+    }
+    // Soft-delete every active row for the day, not just one — self-heals any
+    // duplicate rows a past race already created instead of leaving the
+    // "extra" ones stuck looking checked forever.
+    const now = new Date().toISOString();
+    for (const row of active) {
+      await db
+        .update(checkIns)
+        .set({ deletedAt: now, updatedAt: now, version: row.version + 1, syncStatus: "pending" })
+        .where(eq(checkIns.id, row.id));
+    }
+    this.changes.notify();
+    return null;
   }
 
   async create(input: CreateCheckInInput): Promise<CheckIn> {

@@ -2,8 +2,9 @@ import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core
 import type { FrequencyConfig, FrequencyType, SyncStatus } from "@habit-tracker/core";
 
 /**
- * Mirrors apps/backend's schema field-for-field, plus one local-only column
- * (sync_status) that is never sent to the server. See docs/architecture.md §3.
+ * Mirrors docs/supabase-schema.sql field-for-field, plus one local-only
+ * column (sync_status) that is never sent to the server. See
+ * docs/architecture.md §3.
  */
 export const habits = sqliteTable(
   "habits",
@@ -66,7 +67,7 @@ export const checkIns = sqliteTable(
     syncStatus: text("sync_status").$type<SyncStatus>().notNull().default("pending"),
   },
   (t) => ({
-    // See apps/backend/src/db/schema.ts for why this is a plain index, not UNIQUE.
+    // See docs/supabase-schema.sql for why this is a plain index, not UNIQUE.
     habitDateIdx: index("check_ins_habit_date_idx").on(t.habitId, t.date),
     updatedAtIdx: index("check_ins_updated_at_idx").on(t.updatedAt),
   }),

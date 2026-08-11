@@ -100,17 +100,8 @@ export function useToday() {
   }, [habits, checkInsByHabit, viewedDate, today]);
 
   async function toggleCheckIn(habit: Habit) {
-    const existing = await checkInRepository.getByHabitAndDate(habit.id, viewedDate);
-    if (existing) {
-      await checkInRepository.softDelete(existing.id);
-      return;
-    }
-    await checkInRepository.create({
-      habitId: habit.id,
-      date: viewedDate,
-      completedAt: new Date().toISOString(),
-    });
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const result = await checkInRepository.toggle(habit.id, viewedDate);
+    if (result) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
   }
 
   return { today, viewedDate, setViewedDate, items, toggleCheckIn };

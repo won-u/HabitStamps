@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -29,8 +29,16 @@ export default function TodayScreen() {
   const [categories, setCategories] = useState<readonly Category[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const stripRef = useRef<ScrollView>(null);
 
   useEffect(() => categoryRepository.observe().subscribe(setCategories), []);
+
+  // The strip ends on `today`, so a fresh mount otherwise leaves the
+  // ScrollView at its default (leftmost) offset — showing only past days with
+  // today itself scrolled off the right edge.
+  useEffect(() => {
+    stripRef.current?.scrollToEnd({ animated: false });
+  }, []);
 
   const strip = useMemo(() => {
     const base = new Date(today);
@@ -45,9 +53,15 @@ export default function TodayScreen() {
   }, [today]);
 
   const groups = useMemo<Group[]>(() => {
+    const knownCategoryIds = new Set(categories.map((category) => category.id));
     const byCategory = new Map<string, TodayHabit[]>();
     for (const item of items) {
-      const key = item.habit.categoryId ?? DEFAULT_GROUP_KEY;
+      const categoryId = item.habit.categoryId;
+      // Categories are local-only (never part of SyncGateway), so a habit
+      // synced from another device can reference a category id this device
+      // has never heard of — fall back to the default group instead of
+      // silently dropping the habit from the list.
+      const key = categoryId && knownCategoryIds.has(categoryId) ? categoryId : DEFAULT_GROUP_KEY;
       const bucket = byCategory.get(key);
       if (bucket) bucket.push(item);
       else byCategory.set(key, [item]);
@@ -88,7 +102,7 @@ export default function TodayScreen() {
         </Pressable>
 
         <View style={styles.headerActions}>
-          <Link href="/report" asChild>
+          <Link href="/stats" asChild>
             <Pressable hitSlop={8} style={styles.headerIconButton}>
               <Ionicons name="stats-chart-outline" size={22} color={theme.text} />
             </Pressable>
@@ -102,6 +116,7 @@ export default function TodayScreen() {
       </View>
 
       <ScrollView
+        ref={stripRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.stripContent}

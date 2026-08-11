@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { Session } from '@supabase/supabase-js';
@@ -7,8 +7,8 @@ import type { Session } from '@supabase/supabase-js';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
-import { useSettingsStore, type ColorSchemePreference, type SyncMode } from '@/state/settings-store';
-import { buildSyncEngine, getConfiguredSupabaseClient } from '@/composition/container';
+import { useSettingsStore, type ColorSchemePreference } from '@/state/settings-store';
+import { getConfiguredSupabaseClient, runSync } from '@/composition/container';
 import { signInWithGoogle, signOutSupabase } from '@/data/supabase/auth';
 
 const SCHEME_OPTIONS: { value: ColorSchemePreference; label: string }[] = [
@@ -17,72 +17,33 @@ const SCHEME_OPTIONS: { value: ColorSchemePreference; label: string }[] = [
   { value: 'dark', label: '다크' },
 ];
 
-const SYNC_MODE_OPTIONS: { value: SyncMode; label: string }[] = [
-  { value: 'off', label: '사용 안 함' },
-  { value: 'rest', label: 'REST 백엔드' },
-  { value: 'supabase', label: 'Supabase' },
-];
-
 export default function SettingsScreen() {
   const theme = useTheme();
-  const {
-    colorSchemePreference,
-    setColorSchemePreference,
-    syncMode,
-    setSyncMode,
-    syncServerUrl,
-    setSyncServerUrl,
-    deviceToken,
-    setDeviceToken,
-    supabaseUrl,
-    setSupabaseUrl,
-    supabaseAnonKey,
-    setSupabaseAnonKey,
-    lastSyncedAt,
-    setLastSyncedAt,
-  } = useSettingsStore();
-  const [urlInput, setUrlInput] = useState(syncServerUrl ?? '');
-  const [tokenInput, setTokenInput] = useState(deviceToken);
-  const [supabaseUrlInput, setSupabaseUrlInput] = useState(supabaseUrl ?? '');
-  const [supabaseAnonKeyInput, setSupabaseAnonKeyInput] = useState(supabaseAnonKey ?? '');
-  const [syncing, setSyncing] = useState(false);
-  const [lastResult, setLastResult] = useState<string | null>(null);
+  const { colorSchemePreference, setColorSchemePreference, lastSyncedAt, setLastSyncedAt } = useSettingsStore();
   const [session, setSession] = useState<Session | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
   useEffect(() => {
     const client = getConfiguredSupabaseClient();
-    if (!client) {
-      setSession(null);
-      return;
-    }
     client.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: subscription } = client.auth.onAuthStateChange((_event, nextSession) => setSession(nextSession));
     return () => subscription.subscription.unsubscribe();
-  }, [supabaseUrl, supabaseAnonKey]);
-
-  function saveSyncSettings() {
-    setSyncServerUrl(urlInput.trim().length > 0 ? urlInput.trim() : null);
-    setDeviceToken(tokenInput.trim());
-  }
-
-  function saveSupabaseSettings() {
-    setSupabaseUrl(supabaseUrlInput.trim().length > 0 ? supabaseUrlInput.trim() : null);
-    setSupabaseAnonKey(supabaseAnonKeyInput.trim().length > 0 ? supabaseAnonKeyInput.trim() : null);
-  }
+  }, []);
 
   async function handleGoogleSignIn() {
-    saveSupabaseSettings();
     const client = getConfiguredSupabaseClient();
-    if (!client) {
-      setAuthError('먼저 Supabase URL과 anon key를 입력하세요.');
-      return;
-    }
     setSigningIn(true);
     setAuthError(null);
     try {
       await signInWithGoogle(client);
+      // lastSyncedAt을 리셋하고 나서 동기화한다 — 그렇지 않으면 이전에 로그인했던
+      // 기록이 남아있는 계정으로 다시 로그인할 때, 그 사이 서버에서 직접 실행한
+      // SQL 정리처럼 "이 기기의 워터마크보다 과거 시각으로 갱신된" 변경 사항을
+      // 증분 pull(`updated_at > since`)이 영원히 놓치게 된다. 로그인은 항상
+      // 전체 재동기화를 해도 괜찮을 만큼 드문 이벤트이므로 안전하게 리셋한다.
+      setLastSyncedAt(null);
+      void runSync(); // 로그인 직후 1회 — 그때까지의 로컬 데이터를 서버로 마이그레이션
     } catch (err) {
       setAuthError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -91,27 +52,7 @@ export default function SettingsScreen() {
   }
 
   async function handleSignOut() {
-    const client = getConfiguredSupabaseClient();
-    if (client) await signOutSupabase(client);
-  }
-
-  async function handleSyncNow() {
-    saveSyncSettings();
-    saveSupabaseSettings();
-    setSyncing(true);
-    setLastResult(null);
-    try {
-      const engine = await buildSyncEngine();
-      const since = lastSyncedAt ?? new Date(0).toISOString();
-      const result = await engine.syncNow(since);
-      setLastSyncedAt(result.serverTime);
-      const conflictNote = result.conflicts.length > 0 ? `, 충돌 ${result.conflicts.length}건` : '';
-      setLastResult(`push ${result.pushedHabits + result.pushedCheckIns}건, pull ${result.pulledHabits + result.pulledCheckIns}건${conflictNote}`);
-    } catch (err) {
-      setLastResult(`동기화 실패: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setSyncing(false);
-    }
+    await signOutSupabase(getConfiguredSupabaseClient());
   }
 
   return (
@@ -151,105 +92,34 @@ export default function SettingsScreen() {
         <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
           동기화
         </ThemedText>
-        <View style={styles.row}>
-          {SYNC_MODE_OPTIONS.map((option) => (
-            <Pressable
-              key={option.value}
-              onPress={() => setSyncMode(option.value)}
-              style={[styles.segment, { backgroundColor: syncMode === option.value ? theme.text : theme.backgroundElement }]}>
-              <ThemedText style={{ color: syncMode === option.value ? theme.background : theme.text }}>
-                {option.label}
-              </ThemedText>
+        {session ? (
+          <>
+            <ThemedText themeColor="textSecondary" style={styles.hint}>
+              {session.user.email ?? session.user.id} 로 로그인됨 — 다른 기기와 자동으로 동기화됩니다.
+            </ThemedText>
+            <Pressable onPress={handleSignOut} style={[styles.syncButton, { backgroundColor: theme.backgroundElement }]}>
+              <ThemedText>로그아웃</ThemedText>
             </Pressable>
-          ))}
-        </View>
-
-        {syncMode === 'rest' ? (
-          <>
-            <ThemedText themeColor="textSecondary" style={styles.hint}>
-              로컬 백엔드(docker compose)를 가리키게 설정하면 push/pull을 확인할 수 있어요.
-            </ThemedText>
-            <TextInput
-              value={urlInput}
-              onChangeText={setUrlInput}
-              placeholder="http://localhost:4000 (Android 에뮬레이터는 10.0.2.2)"
-              placeholderTextColor={theme.textSecondary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
-            />
-            <TextInput
-              value={tokenInput}
-              onChangeText={setTokenInput}
-              placeholder="Device Token"
-              placeholderTextColor={theme.textSecondary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
-            />
-          </>
-        ) : syncMode === 'supabase' ? (
-          <>
-            <ThemedText themeColor="textSecondary" style={styles.hint}>
-              내 Supabase 프로젝트로 동기화해요. Google로 로그인하면 같은 계정을 쓰는 다른 기기와 데이터가 오갑니다.
-            </ThemedText>
-            <TextInput
-              value={supabaseUrlInput}
-              onChangeText={setSupabaseUrlInput}
-              onBlur={saveSupabaseSettings}
-              placeholder="https://xxxx.supabase.co"
-              placeholderTextColor={theme.textSecondary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
-            />
-            <TextInput
-              value={supabaseAnonKeyInput}
-              onChangeText={setSupabaseAnonKeyInput}
-              onBlur={saveSupabaseSettings}
-              placeholder="anon public key"
-              placeholderTextColor={theme.textSecondary}
-              autoCapitalize="none"
-              autoCorrect={false}
-              secureTextEntry
-              style={[styles.input, { color: theme.text, borderColor: theme.backgroundSelected }]}
-            />
-
-            {session ? (
-              <>
-                <ThemedText style={styles.hint}>{session.user.email ?? session.user.id} 로 로그인됨</ThemedText>
-                <Pressable onPress={handleSignOut} style={[styles.syncButton, { backgroundColor: theme.backgroundElement }]}>
-                  <ThemedText>로그아웃</ThemedText>
-                </Pressable>
-              </>
-            ) : (
-              <Pressable
-                onPress={handleGoogleSignIn}
-                disabled={signingIn}
-                style={[styles.syncButton, { backgroundColor: theme.text }]}>
-                <ThemedText style={{ color: theme.background }}>{signingIn ? '로그인 중...' : 'Google로 로그인'}</ThemedText>
-              </Pressable>
-            )}
-            {authError ? <ThemedText style={[styles.hint, { color: '#E85D75' }]}>{authError}</ThemedText> : null}
+            {lastSyncedAt ? (
+              <ThemedText themeColor="textSecondary" style={styles.hint}>
+                마지막 동기화: {new Date(lastSyncedAt).toLocaleString()}
+              </ThemedText>
+            ) : null}
           </>
         ) : (
-          <ThemedText themeColor="textSecondary" style={styles.hint}>
-            동기화가 꺼져 있어요. 데이터는 이 기기에만 저장됩니다.
-          </ThemedText>
+          <>
+            <ThemedText themeColor="textSecondary" style={styles.hint}>
+              Google로 로그인하면 다른 기기와 자동으로 동기화됩니다. 로그인하지 않으면 데이터는 이 기기에만 저장돼요.
+            </ThemedText>
+            <Pressable
+              onPress={handleGoogleSignIn}
+              disabled={signingIn}
+              style={[styles.syncButton, { backgroundColor: theme.text }]}>
+              <ThemedText style={{ color: theme.background }}>{signingIn ? '로그인 중...' : 'Google로 로그인'}</ThemedText>
+            </Pressable>
+            {authError ? <ThemedText style={[styles.hint, { color: '#E85D75' }]}>{authError}</ThemedText> : null}
+          </>
         )}
-
-        {syncMode !== 'off' && (syncMode !== 'supabase' || session) ? (
-          <Pressable onPress={handleSyncNow} disabled={syncing} style={[styles.syncButton, { backgroundColor: theme.text }]}>
-            <ThemedText style={{ color: theme.background }}>{syncing ? '동기화 중...' : '지금 동기화'}</ThemedText>
-          </Pressable>
-        ) : null}
-
-        {lastSyncedAt ? (
-          <ThemedText themeColor="textSecondary" style={styles.hint}>
-            마지막 동기화: {new Date(lastSyncedAt).toLocaleString()}
-          </ThemedText>
-        ) : null}
-        {lastResult ? <ThemedText style={styles.hint}>{lastResult}</ThemedText> : null}
       </ScrollView>
     </ThemedView>
   );
@@ -270,6 +140,5 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingVertical: 14,
   },
-  input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 15, marginTop: 8 },
   syncButton: { marginTop: 16, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
 });

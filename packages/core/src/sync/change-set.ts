@@ -1,6 +1,7 @@
 import { z, type ZodTypeAny } from "zod";
 import { habitSchema, type Habit } from "../models/habit";
 import { checkInSchema, type CheckIn } from "../models/check-in";
+import { categorySchema, type Category } from "../models/category";
 
 export function entityChangeSetSchema<TSchema extends ZodTypeAny>(entitySchema: TSchema) {
   return z.object({
@@ -14,6 +15,7 @@ export function entityChangeSetSchema<TSchema extends ZodTypeAny>(entitySchema: 
 export const syncChangeSetSchema = z.object({
   habits: entityChangeSetSchema(habitSchema),
   checkIns: entityChangeSetSchema(checkInSchema),
+  categories: entityChangeSetSchema(categorySchema),
 });
 
 export interface EntityChangeSet<T> {
@@ -29,17 +31,19 @@ export function emptyEntityChangeSet<T>(): EntityChangeSet<T> {
 
 /**
  * The wire format for both /sync/push (client -> server) and /sync/pull
- * (server -> client) bodies. Scope matches docs/architecture.md §4-2:
- * habits and checkIns only — categories/reminders stay local-only in v1.
+ * (server -> client) bodies. Habits, checkIns, and categories all sync —
+ * Reminder is the only entity that still stays local-only in v1.
  */
 export interface SyncChangeSet {
   habits: EntityChangeSet<Habit>;
   checkIns: EntityChangeSet<CheckIn>;
+  categories: EntityChangeSet<Category>;
 }
 
 export function emptySyncChangeSet(): SyncChangeSet {
   return {
     habits: emptyEntityChangeSet<Habit>(),
     checkIns: emptyEntityChangeSet<CheckIn>(),
+    categories: emptyEntityChangeSet<Category>(),
   };
 }
