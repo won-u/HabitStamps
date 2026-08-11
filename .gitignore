@@ -6,9 +6,6 @@ build/
 .expo-shared/
 *.log
 
-# Backend
-apps/backend/.env
-
 # Mobile
 apps/mobile/.env
 apps/mobile/ios/

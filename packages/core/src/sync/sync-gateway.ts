@@ -17,8 +17,9 @@ export interface SyncPullResult {
  * in and out of it. See docs/architecture.md §3-3.
  *
  * v1 ships two implementations:
- * - NoopSyncGateway: no server configured, push/pull are no-ops (default).
- * - RestSyncGateway: talks to apps/backend over HTTP, used for local sync verification.
+ * - NoopSyncGateway: signed out, push/pull are no-ops (default).
+ * - SupabaseSyncGateway: this app's one fixed Supabase project, scoped per
+ *   user by RLS — see docs/architecture.md §5.
  */
 export interface SyncGateway {
   push(changes: SyncChangeSet): Promise<SyncPushResult>;

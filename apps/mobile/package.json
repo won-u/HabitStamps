@@ -59,8 +59,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "verify:sync": "tsx scripts/verify-sync-engine.ts"
+    "db:generate": "drizzle-kit generate"
   },
   "private": true
 }
