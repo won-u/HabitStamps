@@ -55,7 +55,7 @@ habit-tracker/
             │   ├── local/          # drizzle schema.ts, migrations/, sqlite client
             │   ├── local/*-repository.ts  # LocalHabitRepository 등 구현체
             │   ├── supabase/       # client.ts, auth.ts (Google 로그인)
-            │   └── sync/           # SupabaseSyncGateway, NoopSyncGateway, SyncEngine
+            │   └── sync/           # SupabaseSyncGateway, SyncEngine
             ├── state/              # zustand store (외관/lastSyncedAt만 — 동기화 설정은 더 이상 없음)
             ├── notifications/      # expo-notifications 스케줄링
             └── composition/        # DI 조립부 — container.ts
@@ -142,16 +142,18 @@ UI/usecase는 `HabitRepository` 인터페이스에만 의존한다. v1은 `Local
 
 **어댑터 스위칭(Composition Root, `apps/mobile/src/composition/container.ts` 실제 구현)**:
 ```typescript
-export async function buildSyncEngine(): Promise<SyncEngine> {
+export async function runSync(): Promise<void> {
   const client = getConfiguredSupabaseClient(); // 고정 SUPABASE_URL/ANON_KEY
   const { data } = await client.auth.getSession();
-  const gateway: SyncGateway = data.session
-    ? new SupabaseSyncGateway(client)
-    : new NoopSyncGateway();
-  return new SyncEngine(habitRepository, checkInRepository, gateway);
+  if (!data.session) return; // 로그아웃 상태 — lastSyncedAt도 건드리지 않는다
+
+  const engine = new SyncEngine(habitRepository, checkInRepository, new SupabaseSyncGateway(client));
+  // ...syncNow 호출 후 lastSyncedAt 갱신
 }
 ```
-과거엔 설정 화면에서 `사용 안 함 / iCloud / REST 백엔드` 여러 모드를 사용자가 직접 선택했지만, 2026-08-11부터는 **선택지가 아니라 로그인 여부**로 결정된다 — 로그인 안 함(NoopSyncGateway) / 로그인함(SupabaseSyncGateway) 둘뿐이고, 어느 프로젝트로 동기화할지도 더 이상 설정값이 아니라 `constants/supabase.ts`에 고정되어 있다. 자세한 트리거 지점(로그인 직후/로컬 변경 직후/포그라운드 복귀 시)은 §5-3 참고.
+과거엔 설정 화면에서 `사용 안 함 / iCloud / REST 백엔드` 여러 모드를 사용자가 직접 선택했지만, 2026-08-11부터는 **선택지가 아니라 로그인 여부**로 결정된다 — 로그인 안 했으면 `runSync()`가 아무것도 하지 않고 즉시 반환하고, 로그인했으면 `SupabaseSyncGateway`로 동기화한다. 어느 프로젝트로 동기화할지도 더 이상 설정값이 아니라 `constants/supabase.ts`에 고정되어 있다. 자세한 트리거 지점(로그인 직후/로컬 변경 직후/포그라운드 복귀 시)은 §5-3 참고.
+
+과거엔 로그아웃 상태에서 `NoopSyncGateway`(push/pull이 아무 일도 안 하지만 `pull()`이 `serverTime: new Date().toISOString()`을 반환)를 통해 `SyncEngine`을 그대로 태웠는데, 이 결과값을 `runSync()`가 그대로 `lastSyncedAt`에 저장해버려서 **로그아웃 상태에서의 매 포그라운드 동기화마다 `lastSyncedAt`이 "지금"으로 계속 갱신**되는 버그가 있었다. 그러면 실제로 로그인한 시점엔 이미 `lastSyncedAt`이 최근 값이라, 로그인 직후 pull이 `updated_at > lastSyncedAt` 조건으로 서버에 이미 있던 습관/체크인을 전부 걸러버려 "로그인해도 동기화가 안 되는" 것처럼 보였다. 지금은 `runSync()`가 로그아웃 상태면 `lastSyncedAt`을 건드리지 않고 즉시 반환하므로, 로그인 시점의 `lastSyncedAt`은 진짜 "마지막으로 실제 동기화한 시각"(최초 로그인이면 여전히 없음 → epoch)만 반영한다.
 
 ---
 

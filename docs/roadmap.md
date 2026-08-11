@@ -55,6 +55,14 @@ emulator-5556(폰)에서 실사용 확인 중 캘린더 탭이 요일과 무관�
 - **캘린더 탭** (`(tabs)/calendar.tsx`): 요일 헤더(일~토) 추가, `getDay(startOfMonth(month))`만큼 앞에 빈 칸을 넣어 1일이 실제 요일 칸에 오도록 수정, 6칸이 아닌 7칸(요일 수만큼)으로 그리드 재구성. 셀 크기를 `aspectRatio: 1`(퍼센트 너비와 flex-wrap 조합에서 신뢰할 수 없게 동작함이 확인됨 — 가로 151px/세로 116px로 실제 정사각형이 되지 않았다) 대신 `useWindowDimensions` 기준 정확한 픽셀 계산으로 변경. 이 계산을 `Math.floor` 없이 그대로 쓰면 7칸+6개 gap이 컨테이너 너비와 반올림 오차 없이 딱 맞아떨어져, Yoga가 셀 너비를 올림 처리하면서 7번째 칸(토요일)이 매번 다음 줄로 밀려나는 것도 함께 확인·수정(`Math.floor`로 여유 확보). 체크인 dot이 없는 날에도 숫자 위치가 흔들리지 않도록 `dotsRow`에 고정 높이(6) 부여.
 - **오늘 화면 날짜 스트립** (`(tabs)/index.tsx`): 스트립이 항상 "오늘"로 끝나는 배열인데 `ScrollView`가 마운트 시 기본적으로 맨 왼쪽에 위치해 있어 오늘 칸이 화면 밖으로 밀려나 있었다. `ref` + `scrollToEnd({ animated: false })`를 마운트 시 1회 호출해 오늘이 항상 보이는 상태로 시작하도록 수정.
 
+## 2026-08-11 버그 수정: 로그인해도 기존 데이터가 동기화되지 않음
+
+emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신되는데 서버에 이미 있던 습관이 하나도 내려오지 않는 문제가 보고됐다.
+
+- **근본 원인**: 로그아웃 상태에서도 앱 실행/포그라운드 복귀마다 `runSync()`가 돌고 있었는데, 이때 쓰이던 `NoopSyncGateway`는 실제로 아무것도 안 하면서도 `pull()`이 `serverTime: new Date().toISOString()`(현재 시각)을 반환했다. `runSync()`가 이 값을 그대로 `lastSyncedAt`에 저장해버려서, 로그인하기 직전까지도 `lastSyncedAt`이 계속 "지금"으로 최신화되고 있었다. 실제 로그인 후 첫 동기화가 `since = lastSyncedAt`(이미 최근 시각) 기준으로 `updated_at > since`만 pull하다 보니, 서버에 이미 있던 습관/체크인이 전부 필터링돼 걸러졌다.
+- **수정**: `runSync()`가 로그아웃 상태면 `lastSyncedAt`을 전혀 건드리지 않고 즉시 반환하도록 변경(`composition/container.ts`) — "동기화 안 함"과 "지금 막 동기화함"을 더 이상 혼동하지 않는다. 더 이상 쓰이지 않는 `NoopSyncGateway`는 삭제.
+- 이미 이 버그로 `lastSyncedAt`이 오염된 기기는 코드 수정만으로는 저절로 복구되지 않는다 — 로그아웃 후 재로그인해도 `lastSyncedAt`이 그대로 남아있으면 여전히 최근 시각 기준으로 pull하기 때문. emulator-5556은 실제 데이터가 없는 테스트 기기라 `pm clear`로 앱 데이터를 초기화해 검증했다.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*

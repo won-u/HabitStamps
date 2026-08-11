@@ -1,10 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { SyncGateway } from "@habit-tracker/core";
 
 import { LocalHabitRepository } from "@/data/local/habit-repository";
 import { LocalCheckInRepository } from "@/data/local/check-in-repository";
 import { LocalCategoryRepository } from "@/data/local/category-repository";
-import { NoopSyncGateway } from "@/data/sync/noop-sync-gateway";
 import { SupabaseSyncGateway } from "@/data/sync/supabase-sync-gateway";
 import { SyncEngine } from "@/data/sync/sync-engine";
 import { getSupabaseClient } from "@/data/supabase/client";
@@ -54,37 +52,36 @@ export function getConfiguredSupabaseClient(): SupabaseClient {
   return getSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
-/**
- * Built fresh on every sync attempt (not a singleton) because whether it's
- * signed in can change at runtime. See docs/architecture.md §3-3
- * "Composition Root".
- */
-async function buildSyncEngine(): Promise<SyncEngine> {
-  const client = getConfiguredSupabaseClient();
-  const { data } = await client.auth.getSession();
-
-  const gateway: SyncGateway = data.session ? new SupabaseSyncGateway(client) : new NoopSyncGateway();
-
-  return new SyncEngine(habitRepository, checkInRepository, gateway);
-}
-
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let syncInFlight = false;
 
 /**
  * Runs one push+pull cycle. Safe to call often and from multiple triggers
- * (login, app foreground, local writes) — `buildSyncEngine()` resolves to a
- * NoopSyncGateway when signed out, and `syncInFlight` collapses overlapping
- * calls into one. Failures (offline, transient network errors) are swallowed
- * on purpose: local rows stay `syncStatus: 'pending'` either way, so the next
- * trigger retries them — no error banner/retry UI needed (see
- * docs/features.md's "화려한 시각화보다 통계 계산의 신뢰도" principle).
+ * (login, app foreground, local writes) — `syncInFlight` collapses
+ * overlapping calls into one. Failures (offline, transient network errors)
+ * are swallowed on purpose: local rows stay `syncStatus: 'pending'` either
+ * way, so the next trigger retries them — no error banner/retry UI needed
+ * (see docs/features.md's "화려한 시각화보다 통계 계산의 신뢰도" principle).
+ *
+ * Returns immediately without touching `lastSyncedAt` when signed out — this
+ * used to fall through to a NoopSyncGateway that still stamped `lastSyncedAt`
+ * with "now" on every foreground/launch trigger. That poisoned the
+ * incremental-pull watermark: by the time the user actually logged in,
+ * `lastSyncedAt` was already recent (from the logged-out foreground syncs),
+ * so the post-login pull's `updated_at > lastSyncedAt` filter skipped every
+ * pre-existing habit/check-in already on the server — login appeared to
+ * "do nothing". Never persisting a watermark for a sync that didn't happen
+ * keeps the first post-login sync starting from epoch, as intended.
  */
 export async function runSync(): Promise<void> {
   if (syncInFlight) return;
   syncInFlight = true;
   try {
-    const engine = await buildSyncEngine();
+    const client = getConfiguredSupabaseClient();
+    const { data } = await client.auth.getSession();
+    if (!data.session) return;
+
+    const engine = new SyncEngine(habitRepository, checkInRepository, new SupabaseSyncGateway(client));
     const since = useSettingsStore.getState().lastSyncedAt ?? new Date(0).toISOString();
     const result = await engine.syncNow(since);
     useSettingsStore.getState().setLastSyncedAt(result.serverTime);
