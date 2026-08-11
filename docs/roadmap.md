@@ -117,6 +117,15 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 - **이 검증 중 발견한 버그(플랫폼 무관, 안드로이드에도 있던 버그)**: `ReorderableList`의 제스처가 실제로 활성화 안 된 일반 탭에서도 `onFinalize`가 호출되면서 `onReorder`가 매번 실행되고 있었다 — 체크인 토글처럼 드래그와 무관한 탭마다 모든 습관의 `sortOrder`가 불필요하게 재저장되는 부작용이 있었다. IndexedDB 전후 스냅샷 비교로 습관의 `updatedAt`/`version`이 체크인 토글 때마다 같이 바뀌는 걸 보고 발견 — `onStart`에서만 세우는 `hasActivated` 플래그로 실제 드래그가 시작된 경우에만 커밋하도록 수정.
 - 안드로이드 에뮬레이터에서도 재확인해 이번 변경으로 인한 회귀가 없는 것 확인.
 
+## 2026-08-12 기능 추가: PWA 매니페스트 + 오프라인 앱 셸 캐싱
+
+"제대로 된 앱처럼" 설치되게 해달라는 요청 — 위 IndexedDB 작업은 데이터 오프라인만 담당했고, 앱 코드 자체(HTML/JS/CSS)를 오프라인에서 불러오는 부분이 빠져 있었다.
+
+- `src/app/+html.tsx`(신규) + `public/manifest.json`(신규): 홈 화면 설치, iOS Safari 전용 상태바/전체화면 메타 태그, 라이트/다크 `theme-color`. `app.json`의 `web.*` 필드는 이 export 방식에서 매니페스트를 생성해주지 않는 것을 확인해 `+html.tsx` 수동 오버라이드로 대체.
+- `public/sw.js`(신규, 수동 작성 Service Worker): 같은 origin GET 요청을 캐시 우선으로 서빙하고 백그라운드로 갱신, 다른 origin(Supabase)은 그대로 통과. 상세는 `docs/architecture.md` §3-5 참고.
+- **발견한 함정**: 최초 `register()` 호출 시점의 그 페이지 로드 자체는 SW가 아직 활성화되기 전이라 캐시되지 않는다 — install 단계에서 `/`를 미리 fetch해 그 안의 스크립트/스타일시트 URL까지 정규식으로 뽑아 사전 캐싱하지 않으면, 완전한 최초 방문 후 바로 오프라인으로 전환 시 셸 자체가 비어 로드에 실패했다. Playwright로 "온라인 최초 방문 → `setOffline(true)` → 새로고침"을 재현해 발견, 사전 캐싱 추가 후 재검증(오프라인 새로고침 스크린샷이 온라인 때와 동일).
+- 앱 아이콘: 커스텀 브랜딩이 없어(iOS 네이티브도 Expo 기본 템플릿 아이콘 그대로) 기존 아이콘을 배경색(`#F9F8F6`)에 합성해 재사용. 커스텀 아이콘 디자인은 별도 작업으로 남김.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*

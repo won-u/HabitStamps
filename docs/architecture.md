@@ -171,6 +171,15 @@ export async function runSync(): Promise<void> {
 - **검증**: Playwright + Chromium으로 실제 브라우저에서 습관 생성 → 체크인 토글 → 페이지 새로고침까지 수행하고, `indexedDB`를 직접 열어 데이터가 정확히 남아있는지 확인 — 새로고침 전후 데이터가 동일하게 유지되는 것으로 영속성 검증 완료. 오늘 화면의 드래그 재정렬(§5 이전, `components/reorderable-list.tsx`)도 마우스 이벤트(`mousedown` → 350ms 대기 → `mousemove` → `mouseup`)로 재현해 웹에서도 동일하게 동작함을 확인했다.
 - **이 테스트 중 발견한 버그(플랫폼 무관)**: `ReorderableList`의 제스처가 실제로 활성화되지 않은 일반 탭에서도 `onFinalize`가 호출되어 `onReorder`가 매번 실행되고 있었다 — 체크인 토글 같은 무관한 탭마다 모든 습관의 `sortOrder`가 불필요하게 재저장되는 부작용이 있었다(습관의 `updatedAt`/`version`이 체크인 토글 때마다 같이 바뀌는 것으로 발견). `onStart`에서만 세우는 `hasActivated` 플래그로 실제 드래그가 시작된 경우에만 커밋하도록 수정.
 
+### 3-5. PWA — 홈 화면 설치 + 오프라인 앱 셸 캐싱
+
+웹 빌드를 "탭한 링크"가 아니라 아이콘을 탭해 여는 앱처럼 만들려면 두 가지가 더 필요하다: (1) 설치 가능하게 만드는 매니페스트, (2) 데이터와 별개로 **앱 코드 자체**를 오프라인에서 불러오는 캐싱. §3-4의 IndexedDB는 데이터 오프라인만 담당하고, 코드(HTML/JS/CSS) 오프라인은 이 절이 담당한다.
+
+- **설치 가능하게 만들기**: Expo Router의 정적 웹 export는 `app.json`의 `web.*` 필드로 매니페스트를 생성해주지 않는다(확인 완료 — 필드는 스키마에 존재하지만 export 결과물에 반영되지 않음). 대신 `src/app/+html.tsx`(export 시 루트 HTML 문서를 완전히 대체하는 Expo Router 전용 파일)에서 직접 `<link rel="manifest">`와 iOS Safari 전용 태그(`apple-mobile-web-app-capable` 등 — Safari는 표준 매니페스트의 `theme_color`/`display`를 상태바/전체화면에 반영하지 않아 별도 필요)를 추가하고, `apps/mobile/public/manifest.json` + 아이콘 PNG들(`public/`은 Expo가 가공 없이 그대로 웹 루트에 복사하는 디렉터리)을 둔다.
+- **앱 셸 오프라인 캐싱**: `public/sw.js`(수동 작성 Service Worker, `+html.tsx`의 인라인 스크립트로 등록) — `install` 시점에 `/`를 먼저 받아와 그 HTML 안의 `<script src>`/`<link href>`를 정규식으로 추출해 JS/CSS/아이콘까지 한 번에 캐시한다. 빌드마다 파일명에 콘텐츠 해시가 붙어 매번 바뀌므로(Expo가 별도 에셋 매니페스트를 안 만들어줌), 하드코딩된 파일명 목록 대신 이 방식을 택했다. 이후 같은 origin의 GET 요청은 캐시 우선(응답 즉시 반환) + 백그라운드로 네트워크 갱신, Supabase 등 다른 origin 요청은 그대로 통과시켜 SW가 동기화 API 응답을 캐시하지 않게 한다.
+- **검증 중 발견한 함정**: 최초 `register()` 직후의 그 페이지 로드는 SW가 아직 활성화되기 전이라 자기 자신의 HTML/JS 요청이 fetch 핸들러를 거치지 않는다(`clients.claim()`을 불러도 마찬가지 — 이미 시작된 요청은 되돌릴 수 없음). 그래서 install 단계에서 `/`를 명시적으로 fetch해 미리 캐시해두지 않으면, 진짜 완전한 최초 방문 직후 오프라인으로 전환했을 때 셸 자체가 비어 있어 로드에 실패한다. Playwright로 "온라인 최초 방문 → `context().setOffline(true)` → 새로고침" 시나리오를 직접 재현해 이 문제를 발견하고 install 시 사전 캐싱을 추가해 해결— 재현 후에는 오프라인 새로고침도 온라인 때와 동일하게 렌더링됨을 스크린샷으로 확인했다.
+- **아이콘**: `assets/images/icon.png`(Expo 기본 템플릿 아이콘, 이 프로젝트는 아직 커스텀 앱 아이콘을 만든 적이 없음 — iOS 네이티브 빌드도 동일)을 PIL로 실제 라이트 테마 배경색(`#F9F8F6`)에 합성 후 리사이즈해 `apple-touch-icon.png`(180×180)/`icon-192.png`/`icon-512.png`로 사용. 커스텀 브랜딩이 필요하면 추후 별도 작업.
+
 ---
 
 ## 4. (제거됨) 자체 REST 백엔드 — 히스토리
