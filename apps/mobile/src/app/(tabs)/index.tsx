@@ -88,7 +88,7 @@ export default function TodayScreen() {
         </Pressable>
 
         <View style={styles.headerActions}>
-          <Link href="/report" asChild>
+          <Link href="/stats" asChild>
             <Pressable hitSlop={8} style={styles.headerIconButton}>
               <Ionicons name="stats-chart-outline" size={22} color={theme.text} />
             </Pressable>

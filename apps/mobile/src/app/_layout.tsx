@@ -59,7 +59,6 @@ export default function RootLayout() {
       <Stack.Screen name="habit/new" options={{ presentation: 'modal', title: '습관 추가' }} />
       <Stack.Screen name="habit/[id]/index" options={{ title: '습관' }} />
       <Stack.Screen name="habit/[id]/edit" options={{ presentation: 'modal', title: '습관 수정' }} />
-      <Stack.Screen name="report" options={{ title: '리포트' }} />
     </Stack>
   );
 }

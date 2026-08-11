@@ -15,8 +15,8 @@ import {
   subMonths,
 } from 'date-fns';
 import { ko } from 'date-fns/locale';
-import type { CheckIn, Habit } from '@habit-tracker/core';
-import { calculateStreak } from '@habit-tracker/core';
+import type { CheckIn, Habit, StreakRange } from '@habit-tracker/core';
+import { calculateStreak, getPeriodCounts } from '@habit-tracker/core';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -26,6 +26,13 @@ import { habitRepository, checkInRepository } from '@/composition/container';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const STREAK_LOOKBACK_DAYS = 400;
+
+// Dates here are always 'yyyy-MM-dd' strings, so a plain character swap
+// avoids re-parsing them through Date (and the TZ bugs that invites).
+function formatRange(range: StreakRange): string {
+  const dot = (dateStr: string) => dateStr.replaceAll('-', '.');
+  return range.start === range.end ? dot(range.start) : `${dot(range.start)} ~ ${dot(range.end)}`;
+}
 
 export default function HabitDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -44,16 +51,22 @@ export default function HabitDetailScreen() {
   const today = format(new Date(), 'yyyy-MM-dd');
   const checkedDates = useMemo(() => new Set(checkIns.map((checkIn) => checkIn.date)), [checkIns]);
 
-  const { current, longest } = useMemo(() => {
+  const { current, longest, currentRange, longestRange } = useMemo(() => {
     const rangeStart = format(subDays(new Date(today), STREAK_LOOKBACK_DAYS), 'yyyy-MM-dd');
     const dates = [...checkedDates].filter((date) => date >= rangeStart);
     return calculateStreak(dates, today);
   }, [checkedDates, today]);
 
+  const isCurrentStreakRecord = current > 0 && current === longest;
+
   const monthlyCheckedCount = useMemo(() => {
     const monthPrefix = format(month, 'yyyy-MM');
     return [...checkedDates].filter((date) => date.startsWith(monthPrefix)).length;
   }, [checkedDates, month]);
+
+  // Unlike the streak calc above, "전체" (all-time) must not be capped by
+  // STREAK_LOOKBACK_DAYS — it counts every check-in this habit has ever had.
+  const periodCounts = useMemo(() => getPeriodCounts([...checkedDates], today), [checkedDates, today]);
 
   const swipeHandlers = useSwipeNavigation(
     () => setMonth((m) => addMonths(m, 1)),
@@ -126,14 +139,53 @@ export default function HabitDetailScreen() {
           </ThemedText>
         </View>
 
+        <View style={styles.statisticSection}>
+          <ThemedText type="smallBold" themeColor="textSecondary" style={styles.statisticTitle}>
+            Statistic
+          </ThemedText>
+          <View style={styles.tileRow}>
+            {(
+              [
+                { label: '이번주', value: periodCounts.thisWeek },
+                { label: '이번달', value: periodCounts.thisMonth },
+                { label: '올해', value: periodCounts.thisYear },
+                { label: '전체', value: periodCounts.allTime },
+              ] as const
+            ).map((tile) => (
+              <View key={tile.label} style={[styles.tile, { backgroundColor: theme.backgroundElement }]}>
+                <ThemedText type="title" style={styles.tileValue}>
+                  {tile.value}
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {tile.label}
+                </ThemedText>
+              </View>
+            ))}
+          </View>
+        </View>
+
         <View style={styles.streakRow}>
           <View style={[styles.streakCard, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="small" themeColor="textSecondary">
-              현재 스트릭
-            </ThemedText>
+            <View style={styles.streakLabelRow}>
+              <ThemedText type="small" themeColor="textSecondary">
+                현재 스트릭
+              </ThemedText>
+              {isCurrentStreakRecord ? (
+                <View style={styles.recordBadge}>
+                  <ThemedText type="small" style={styles.recordBadgeText}>
+                    RECORD
+                  </ThemedText>
+                </View>
+              ) : null}
+            </View>
             <ThemedText type="title" style={[styles.streakNumber, { color: habit.color }]}>
               {current}
             </ThemedText>
+            {currentRange ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {formatRange(currentRange)}
+              </ThemedText>
+            ) : null}
           </View>
           <View style={[styles.streakCard, { backgroundColor: theme.backgroundElement }]}>
             <ThemedText type="small" themeColor="textSecondary">
@@ -142,6 +194,11 @@ export default function HabitDetailScreen() {
             <ThemedText type="title" style={styles.streakNumber}>
               {longest}
             </ThemedText>
+            {longestRange ? (
+              <ThemedText type="small" themeColor="textSecondary">
+                {formatRange(longestRange)}
+              </ThemedText>
+            ) : null}
           </View>
         </View>
       </ScrollView>
@@ -259,7 +316,15 @@ const styles = StyleSheet.create({
   checkedDayText: { color: '#FFFFFF', fontWeight: '700' },
   streakRow: { flexDirection: 'row', gap: 12 },
   streakCard: { flex: 1, borderRadius: 20, padding: 16, gap: 6 },
+  streakLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  recordBadge: { backgroundColor: '#E85D75', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  recordBadgeText: { color: '#FFFFFF' },
   streakNumber: { fontSize: 36, lineHeight: 40 },
+  statisticSection: { gap: 8 },
+  statisticTitle: { marginLeft: 4 },
+  tileRow: { flexDirection: 'row', gap: 10 },
+  tile: { flex: 1, borderRadius: 16, paddingVertical: 14, alignItems: 'center', gap: 2 },
+  tileValue: { fontSize: 24, lineHeight: 28 },
   todayFab: {
     position: 'absolute',
     right: 20,
