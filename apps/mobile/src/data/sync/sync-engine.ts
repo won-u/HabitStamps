@@ -8,6 +8,8 @@ export interface SyncSummary {
   pulledCheckIns: number;
   pulledCategories: number;
   conflicts: string[];
+  /** Entity ids whose push RPC call itself failed this round (network/etc.) — left pending, retried next time. */
+  failed: string[];
   serverTime: string;
 }
 
@@ -37,10 +39,16 @@ export class SyncEngine {
 
     const pushResult = await this.gateway.push(changes);
     const conflictIds = new Set(pushResult.conflicts);
+    // Ids in `failedIds` were never evaluated against LWW (their entity
+    // type's RPC call itself failed) — they must stay pending, not be
+    // marked synced or lumped in with genuine conflicts (see the comment on
+    // `push()` in supabase-sync-gateway.ts).
+    const failedIds = new Set(pushResult.failedIds);
+    const notPushed = (id: string) => conflictIds.has(id) || failedIds.has(id);
 
-    const pushedHabitIds = pendingHabits.map((h) => h.id).filter((id) => !conflictIds.has(id));
-    const pushedCheckInIds = pendingCheckIns.map((c) => c.id).filter((id) => !conflictIds.has(id));
-    const pushedCategoryIds = pendingCategories.map((c) => c.id).filter((id) => !conflictIds.has(id));
+    const pushedHabitIds = pendingHabits.map((h) => h.id).filter((id) => !notPushed(id));
+    const pushedCheckInIds = pendingCheckIns.map((c) => c.id).filter((id) => !notPushed(id));
+    const pushedCategoryIds = pendingCategories.map((c) => c.id).filter((id) => !notPushed(id));
     await this.habitRepository.markSynced(pushedHabitIds, pushResult.acceptedAt);
     await this.checkInRepository.markSynced(pushedCheckInIds, pushResult.acceptedAt);
     await this.categoryRepository.markSynced(pushedCategoryIds, pushResult.acceptedAt);
@@ -67,6 +75,7 @@ export class SyncEngine {
       pulledCheckIns: checkIns.created.length + checkIns.updated.length,
       pulledCategories: categories.created.length + categories.updated.length,
       conflicts: pushResult.conflicts,
+      failed: pushResult.failedIds,
       serverTime: pullResult.serverTime,
     };
   }

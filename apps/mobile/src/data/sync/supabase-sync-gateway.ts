@@ -124,31 +124,49 @@ export class SupabaseSyncGateway implements SyncGateway {
   async push(changes: SyncChangeSet): Promise<SyncPushResult> {
     const dirtyHabits = [...changes.habits.created, ...changes.habits.updated];
     const dirtyCheckIns = [...changes.checkIns.created, ...changes.checkIns.updated];
+    const dirtyCategories = [...changes.categories.created, ...changes.categories.updated];
     const conflicts: string[] = [];
+    const failedIds: string[] = [];
 
+    // Each entity type's RPC call is independent — one failing (network drop,
+    // transient error) must not stop the others from being pushed, and must
+    // not prevent already-succeeded entity types from being marked synced by
+    // SyncEngine. Previously a single `throw` here aborted the whole push(),
+    // so an entity type that had already succeeded server-side never got
+    // markSynced'd; the next push resent it unchanged, which the server's
+    // strict `updated_at <` comparison then rejected as a permanent, never-
+    // resolving "conflict" (see docs/code-review-2026-08-12.md Major #4).
     if (dirtyHabits.length > 0) {
       const { data, error } = await this.client.rpc("sync_upsert_habits", { rows: dirtyHabits });
-      if (error) throw error;
-      const accepted = new Set((data ?? []) as string[]);
-      for (const habit of dirtyHabits) if (!accepted.has(habit.id)) conflicts.push(habit.id);
+      if (error) {
+        failedIds.push(...dirtyHabits.map((habit) => habit.id));
+      } else {
+        const accepted = new Set((data ?? []) as string[]);
+        for (const habit of dirtyHabits) if (!accepted.has(habit.id)) conflicts.push(habit.id);
+      }
     }
 
     if (dirtyCheckIns.length > 0) {
       const { data, error } = await this.client.rpc("sync_upsert_check_ins", { rows: dirtyCheckIns });
-      if (error) throw error;
-      const accepted = new Set((data ?? []) as string[]);
-      for (const checkIn of dirtyCheckIns) if (!accepted.has(checkIn.id)) conflicts.push(checkIn.id);
+      if (error) {
+        failedIds.push(...dirtyCheckIns.map((checkIn) => checkIn.id));
+      } else {
+        const accepted = new Set((data ?? []) as string[]);
+        for (const checkIn of dirtyCheckIns) if (!accepted.has(checkIn.id)) conflicts.push(checkIn.id);
+      }
     }
 
-    const dirtyCategories = [...changes.categories.created, ...changes.categories.updated];
     if (dirtyCategories.length > 0) {
       const { data, error } = await this.client.rpc("sync_upsert_categories", { rows: dirtyCategories });
-      if (error) throw error;
-      const accepted = new Set((data ?? []) as string[]);
-      for (const category of dirtyCategories) if (!accepted.has(category.id)) conflicts.push(category.id);
+      if (error) {
+        failedIds.push(...dirtyCategories.map((category) => category.id));
+      } else {
+        const accepted = new Set((data ?? []) as string[]);
+        for (const category of dirtyCategories) if (!accepted.has(category.id)) conflicts.push(category.id);
+      }
     }
 
-    return { acceptedAt: new Date().toISOString(), conflicts };
+    return { acceptedAt: new Date().toISOString(), conflicts, failedIds };
   }
 
   async pull(sinceIso: string): Promise<SyncPullResult> {

@@ -4,6 +4,15 @@ export interface SyncPushResult {
   acceptedAt: string;
   /** ids that lost last-write-wins on the server and were NOT applied; will come back via the next pull */
   conflicts: string[];
+  /**
+   * ids whose entity type's upsert RPC couldn't even be attempted this round
+   * (e.g. a network drop between the habits and check-ins calls) — distinct
+   * from `conflicts`: these were never evaluated against LWW at all, so they
+   * stay `pending` and are retried on the next push, instead of being
+   * (wrongly) marked synced or permanently stuck as a conflict. See
+   * docs/code-review-2026-08-12.md Major #4.
+   */
+  failedIds: string[];
 }
 
 export interface SyncPullResult {
