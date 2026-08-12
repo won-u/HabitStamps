@@ -15,6 +15,13 @@
       "when": 1785298975433,
       "tag": "0001_stale_genesis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1786521768092,
+      "tag": "0002_dizzy_jazinda",
+      "breakpoints": true
     }
   ]
 }

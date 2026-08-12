@@ -1,4 +1,5 @@
-import { sqliteTable, text, integer, real, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
 import type { FrequencyConfig, FrequencyType, SyncStatus } from "@habit-tracker/core";
 
 /**
@@ -29,7 +30,7 @@ export const habits = sqliteTable(
   }),
 );
 
-/** Local-only (not part of the v1 sync scope — see docs/architecture.md §4-2). */
+/** Synced as its own entity alongside habits/checkIns — see docs/architecture.md §5. */
 export const categories = sqliteTable(
   "categories",
   {
@@ -67,8 +68,15 @@ export const checkIns = sqliteTable(
     syncStatus: text("sync_status").$type<SyncStatus>().notNull().default("pending"),
   },
   (t) => ({
-    // See docs/supabase-schema.sql for why this is a plain index, not UNIQUE.
     habitDateIdx: index("check_ins_habit_date_idx").on(t.habitId, t.date),
+    // One active check-in per habit per day — mirrors docs/supabase-schema.sql.
+    // toggle()'s in-memory lock already prevents this on a single device, but
+    // this is the backstop for paths that don't go through it: two devices
+    // independently creating a check-in for the same day while offline, then
+    // both syncing (see check-in-repository.ts's applyRemoteChanges).
+    habitDateUniqueIdx: uniqueIndex("check_ins_habit_date_unique_idx")
+      .on(t.habitId, t.date)
+      .where(sql`${t.deletedAt} is null`),
     updatedAtIdx: index("check_ins_updated_at_idx").on(t.updatedAt),
   }),
 );

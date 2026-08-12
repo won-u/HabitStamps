@@ -38,6 +38,30 @@ create table if not exists public.check_ins (
 );
 create index if not exists check_ins_user_updated_idx on public.check_ins (user_id, updated_at);
 
+-- Same self-heal cleanup as the local SQLite migration
+-- (apps/mobile/drizzle/0002_*.sql) — a device that hit the check-in
+-- duplication race (docs/architecture.md §3-2) could already have pushed
+-- more than one active row for the same (habit_id, date). Run once, before
+-- the UNIQUE index below, so it doesn't fail to create against pre-existing
+-- duplicates. Safe to re-run: once no duplicates remain, this affects 0 rows.
+with duplicates as (
+  select id, row_number() over (partition by habit_id, date order by created_at asc, id asc) as rn
+  from public.check_ins
+  where deleted_at is null
+)
+update public.check_ins
+set deleted_at = now(), updated_at = now(), version = version + 1
+where id in (select id from duplicates where rn > 1);
+
+-- One active check-in per habit per day, mirroring the local SQLite schema
+-- (apps/mobile/src/data/local/schema.ts). toggle()'s in-memory lock already
+-- prevents this on a single device; this is the backstop for two devices
+-- independently creating a check-in for the same day while offline, then
+-- both pushing — sync_upsert_check_ins below treats the resulting conflict
+-- as a normal per-row conflict instead of failing the whole batch, and the
+-- losing device reconciles it via applyRemoteChanges on its next pull.
+create unique index if not exists check_ins_habit_date_unique_idx on public.check_ins (habit_id, date) where deleted_at is null;
+
 create table if not exists public.categories (
   id uuid primary key,
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -151,23 +175,33 @@ begin
 
   for r in select * from jsonb_array_elements(rows) loop
     did := null;
-    insert into public.check_ins (
-      id, user_id, habit_id, date, completed_at, note, photo_uri, value,
-      created_at, updated_at, version, deleted_at
-    )
-    values (
-      (r->>'id')::uuid, uid, (r->>'habitId')::uuid, (r->>'date')::date,
-      (r->>'completedAt')::timestamptz, r->>'note', r->>'photoUri',
-      nullif(r->>'value', '')::numeric,
-      (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
-      (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
-    )
-    on conflict (id) do update set
-      habit_id = excluded.habit_id, date = excluded.date, completed_at = excluded.completed_at,
-      note = excluded.note, photo_uri = excluded.photo_uri, value = excluded.value,
-      updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at
-    where public.check_ins.user_id = uid and public.check_ins.updated_at < excluded.updated_at
-    returning id into did;
+    -- Nested block: a unique_violation here means another (already-accepted)
+    -- row occupies this (habit_id, date) — most likely two devices created a
+    -- check-in for the same day while both offline. Catching it keeps this
+    -- one row as an ordinary conflict (the pushing device's next pull will
+    -- reconcile it, see apps/mobile/.../check-in-repository.ts's
+    -- applyRemoteChanges) instead of aborting every other row in this batch.
+    begin
+      insert into public.check_ins (
+        id, user_id, habit_id, date, completed_at, note, photo_uri, value,
+        created_at, updated_at, version, deleted_at
+      )
+      values (
+        (r->>'id')::uuid, uid, (r->>'habitId')::uuid, (r->>'date')::date,
+        (r->>'completedAt')::timestamptz, r->>'note', r->>'photoUri',
+        nullif(r->>'value', '')::numeric,
+        (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
+        (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
+      )
+      on conflict (id) do update set
+        habit_id = excluded.habit_id, date = excluded.date, completed_at = excluded.completed_at,
+        note = excluded.note, photo_uri = excluded.photo_uri, value = excluded.value,
+        updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at
+      where public.check_ins.user_id = uid and public.check_ins.updated_at < excluded.updated_at
+      returning id into did;
+    exception when unique_violation then
+      did := null;
+    end;
 
     if did is not null then
       accepted := array_append(accepted, did);

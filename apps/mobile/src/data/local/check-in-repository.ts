@@ -1,4 +1,4 @@
-import { and, between, desc, eq, isNotNull, or } from "drizzle-orm";
+import { and, between, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
 import { randomUUID } from "expo-crypto";
 import type {
   CheckIn,
@@ -181,13 +181,60 @@ export class LocalCheckInRepository implements CheckInRepository {
   async applyRemoteChanges(rows: readonly CheckIn[]): Promise<void> {
     for (const checkIn of rows) {
       const [existing] = await db.select().from(checkIns).where(eq(checkIns.id, checkIn.id)).limit(1);
-      const incomingRow: CheckInRow = { ...checkIn, syncStatus: "synced" };
       if (!existing) {
-        await db.insert(checkIns).values(incomingRow);
+        await this.insertRemoteCheckIn(checkIn);
       } else if (new Date(checkIn.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
-        await db.update(checkIns).set(incomingRow).where(eq(checkIns.id, checkIn.id));
+        await db.update(checkIns).set({ ...checkIn, syncStatus: "synced" }).where(eq(checkIns.id, checkIn.id));
       }
     }
     this.changes.notify();
+  }
+
+  /**
+   * Inserts a check-in `pull()` brought down for the first time. If this
+   * device independently created its own active check-in for the same
+   * (habitId, date) — e.g. two devices offline on the same day — the
+   * incoming row already won server-side (docs/supabase-schema.sql's
+   * sync_upsert_check_ins rejects the loser as a UNIQUE-constraint conflict),
+   * so this device's row is retired: any note/photo/value it has that the
+   * incoming row lacks is carried over, the local row is soft-deleted, and
+   * the merged row is marked `pending` (only when the merge actually changed
+   * something) so that content reaches the server too on the next push.
+   */
+  private async insertRemoteCheckIn(checkIn: CheckIn): Promise<void> {
+    const conflicting = await db
+      .select()
+      .from(checkIns)
+      .where(and(eq(checkIns.habitId, checkIn.habitId), eq(checkIns.date, checkIn.date), isNull(checkIns.deletedAt)));
+
+    if (conflicting.length === 0) {
+      await db.insert(checkIns).values({ ...checkIn, syncStatus: "synced" });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    for (const row of conflicting) {
+      await db
+        .update(checkIns)
+        .set({ deletedAt: now, updatedAt: now, version: row.version + 1, syncStatus: "pending" })
+        .where(eq(checkIns.id, row.id));
+    }
+
+    const loser = conflicting[0]!;
+    const note = checkIn.note ?? loser.note;
+    const photoUri = checkIn.photoUri ?? loser.photoUri;
+    const value = checkIn.value ?? loser.value;
+    const needsPush = note !== checkIn.note || photoUri !== checkIn.photoUri || value !== checkIn.value;
+
+    const row: CheckInRow = {
+      ...checkIn,
+      note,
+      photoUri,
+      value,
+      updatedAt: needsPush ? now : checkIn.updatedAt,
+      version: needsPush ? checkIn.version + 1 : checkIn.version,
+      syncStatus: needsPush ? "pending" : "synced",
+    };
+    await db.insert(checkIns).values(row);
   }
 }

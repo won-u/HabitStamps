@@ -182,11 +182,52 @@ export class LocalCheckInRepository implements CheckInRepository {
     const db = await getWebDb();
     for (const checkIn of rows) {
       const existing = await db.get("check_ins", checkIn.id);
-      const incomingRow: LocalCheckInRow = { ...checkIn, syncStatus: "synced" };
-      if (!existing || new Date(checkIn.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
-        await db.put("check_ins", incomingRow);
+      if (!existing) {
+        await this.insertRemoteCheckIn(checkIn);
+      } else if (new Date(checkIn.updatedAt).getTime() >= new Date(existing.updatedAt).getTime()) {
+        await db.put("check_ins", { ...checkIn, syncStatus: "synced" });
       }
     }
     this.changes.notify();
+  }
+
+  /**
+   * Mirrors the native (SQLite) LocalCheckInRepository.insertRemoteCheckIn —
+   * same conflict-merge policy for the same reason (see its doc comment).
+   * IndexedDB has no partial-unique-index equivalent to the SQLite/Postgres
+   * (habit_id, date) constraint, so this explicit check is this platform's
+   * only backstop against the same-day duplicate-across-devices case.
+   */
+  private async insertRemoteCheckIn(checkIn: CheckIn): Promise<void> {
+    const db = await getWebDb();
+    const rowsForHabit = await db.getAllFromIndex("check_ins", "habitId", checkIn.habitId);
+    const conflicting = rowsForHabit.filter((row) => row.date === checkIn.date && !row.deletedAt);
+
+    if (conflicting.length === 0) {
+      await db.put("check_ins", { ...checkIn, syncStatus: "synced" });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    for (const row of conflicting) {
+      await db.put("check_ins", { ...row, deletedAt: now, updatedAt: now, version: row.version + 1, syncStatus: "pending" });
+    }
+
+    const loser = conflicting[0]!;
+    const note = checkIn.note ?? loser.note;
+    const photoUri = checkIn.photoUri ?? loser.photoUri;
+    const value = checkIn.value ?? loser.value;
+    const needsPush = note !== checkIn.note || photoUri !== checkIn.photoUri || value !== checkIn.value;
+
+    const row: LocalCheckInRow = {
+      ...checkIn,
+      note,
+      photoUri,
+      value,
+      updatedAt: needsPush ? now : checkIn.updatedAt,
+      version: needsPush ? checkIn.version + 1 : checkIn.version,
+      syncStatus: needsPush ? "pending" : "synced",
+    };
+    await db.put("check_ins", row);
   }
 }
