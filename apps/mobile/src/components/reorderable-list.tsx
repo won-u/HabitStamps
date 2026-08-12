@@ -1,13 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { Gesture, GestureDetector, type PanGesture } from 'react-native-gesture-handler';
-import Animated, {
-  LinearTransition,
-  runOnJS,
-  useAnimatedStyle,
-  useSharedValue,
-  withSpring,
-} from 'react-native-reanimated';
+import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 
 const LONG_PRESS_DURATION_MS = 350;
@@ -84,6 +78,18 @@ export function ReorderableList<T>({ data, keyExtractor, onReorder, renderItem, 
   const [order, setOrder] = useState<T[]>(() => [...data]);
   const [heights, setHeights] = useState<Record<string, number>>({});
   const [activeKey, setActiveKey] = useState<string | null>(null);
+  // Where the drag would land if released right now — a pure rendering hint,
+  // deliberately NOT applied to `order` until the drag ends. Reordering the
+  // real array mid-drag (the previous approach) reorders the underlying DOM
+  // nodes on every threshold crossing, and iOS Safari cancels an in-progress
+  // touch when the DOM subtree under the finger mutates like that — visible
+  // as "drag only ever moves one slot, then the gesture just ends" on iPhone
+  // (reported after the whole-row/handle drag was already working on
+  // Android). Keeping `order` frozen during the drag and only expressing
+  // progress via each row's own transform (see `shiftY` below) means no DOM
+  // node moves at all while a finger is down; the real splice happens once,
+  // after release.
+  const [dragToIndex, setDragToIndex] = useState<number | null>(null);
   const orderRef = useRef(order);
   orderRef.current = order;
 
@@ -117,39 +123,57 @@ export function ReorderableList<T>({ data, keyExtractor, onReorder, renderItem, 
     cumulative += heights[keyExtractor(item)] ?? DEFAULT_ROW_HEIGHT;
   }
 
-  function moveToIndex(key: string, toIndex: number) {
-    setOrder((prev) => {
-      const fromIndex = prev.findIndex((item) => keyExtractor(item) === key);
-      if (fromIndex === -1 || fromIndex === toIndex) return prev;
-      const next = [...prev];
-      const [moved] = next.splice(fromIndex, 1);
-      next.splice(toIndex, 0, moved);
-      return next;
-    });
-  }
+  const fromIndex = activeKey === null ? -1 : order.findIndex((item) => keyExtractor(item) === activeKey);
+  const activeHeight = fromIndex === -1 ? 0 : (heights[keyExtractor(order[fromIndex])] ?? DEFAULT_ROW_HEIGHT);
 
   function commit() {
+    const key = activeKey;
+    const toIndex = dragToIndex;
     setActiveKey(null);
-    onReorder(orderRef.current);
+    setDragToIndex(null);
+    if (key === null || toIndex === null) return;
+    setOrder((prev) => {
+      const fromIdx = prev.findIndex((item) => keyExtractor(item) === key);
+      if (fromIdx === -1 || fromIdx === toIndex) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIdx, 1);
+      next.splice(toIndex, 0, moved);
+      onReorder(next);
+      return next;
+    });
   }
 
   return (
     <View>
       {order.map((item, index) => {
         const key = keyExtractor(item);
+        // While a drag is active, every OTHER row between the drag's start
+        // slot and its current target slot visually slides out of the way
+        // by exactly the dragged row's height — the same displacement that
+        // will actually happen once the real splice lands, just expressed
+        // as a transform instead of an array mutation.
+        let shiftY = 0;
+        if (activeKey !== null && key !== activeKey && dragToIndex !== null && fromIndex !== -1) {
+          if (fromIndex < dragToIndex && index > fromIndex && index <= dragToIndex) shiftY = -activeHeight;
+          else if (fromIndex > dragToIndex && index >= dragToIndex && index < fromIndex) shiftY = activeHeight;
+        }
         return (
           <DraggableRow
             key={key}
             rowKey={key}
             startOffsetY={offsets[index]}
+            shiftY={shiftY}
             heights={heights}
             order={order}
             keyExtractor={keyExtractor}
             disabled={disabled || (activeKey !== null && activeKey !== key)}
             isActive={activeKey === key}
             onLayoutHeight={(h) => setHeights((prev) => (prev[key] === h ? prev : { ...prev, [key]: h }))}
-            onDragStart={() => setActiveKey(key)}
-            onDragMove={(toIndex) => moveToIndex(key, toIndex)}
+            onDragStart={() => {
+              setActiveKey(key);
+              setDragToIndex(index);
+            }}
+            onDragMove={(toIndex) => setDragToIndex(toIndex)}
             onDragEnd={commit}
             renderContent={(handle) => renderItem(item, handle)}
           />
@@ -162,6 +186,7 @@ export function ReorderableList<T>({ data, keyExtractor, onReorder, renderItem, 
 interface DraggableRowProps<T> {
   rowKey: string;
   startOffsetY: number;
+  shiftY: number;
   heights: Record<string, number>;
   order: T[];
   keyExtractor: (item: T) => string;
@@ -177,6 +202,7 @@ interface DraggableRowProps<T> {
 function DraggableRow<T>({
   rowKey,
   startOffsetY,
+  shiftY,
   heights,
   order,
   keyExtractor,
@@ -191,6 +217,10 @@ function DraggableRow<T>({
   const translateY = useSharedValue(0);
   const dragStartOffsetY = useSharedValue(0);
   const hasActivated = useSharedValue(false);
+  const shiftYShared = useSharedValue(shiftY);
+  useEffect(() => {
+    shiftYShared.value = withSpring(shiftY, { duration: 200 });
+  }, [shiftY, shiftYShared]);
 
   // Recomputed on every render from plain JS state (heights/order), not a
   // shared value — this only needs to update when React re-renders (a row
@@ -335,22 +365,27 @@ function DraggableRow<T>({
   );
 
   const animatedStyle = useAnimatedStyle(() => {
-    if (!isActive) return { transform: [{ translateY: 0 }] };
-    // Corrects for the row's own flex position having already jumped to its
-    // new slot (via the LinearTransition below) by the time a splice lands —
-    // keeps the row visually glued to the finger instead of double-moving.
-    const correction = dragStartOffsetY.value - currentOffsetY;
-    return { transform: [{ translateY: translateY.value + correction }] };
+    if (isActive) {
+      // Corrects for the row's own flex position possibly having moved to a
+      // new slot (from the previous drag's splice, before this one started)
+      // by the time this drag's math runs — keeps the row visually glued to
+      // the finger. `order` is frozen for the *duration* of a single drag
+      // (see the ReorderableList-level comment above), so within one drag
+      // this stays 0 the whole time; it only ever matters at the start.
+      const correction = dragStartOffsetY.value - currentOffsetY;
+      return { transform: [{ translateY: translateY.value + correction }] };
+    }
+    return { transform: [{ translateY: shiftYShared.value }] };
   }, [isActive, currentOffsetY]);
 
   return (
     <Animated.View
-      // 웹에서는 다른 행들이 새 자리로 밀리는 것도 LinearTransition으로
-      // 애니메이션하지 않는다 — Reanimated의 레이아웃 애니메이션이 웹에서
-      // 불안정해서(공식적으로 네이티브만큼 지원되지 않음), 드래그 중인
-      // 행이 재정렬 순간 원래 자리로 튕겨 돌아가는 원인이 됐다. 웹은 그냥
-      // 즉시 자리를 바꾼다(애니메이션만 없어짐, 기능은 그대로).
-      layout={isActive || Platform.OS === 'web' ? undefined : LinearTransition}
+      // No layout-animation prop here: `order` (and therefore each row's
+      // flex position) only ever changes once, at the moment a drag commits
+      // — every row that needs to "move" during the drag itself already did
+      // so visually via `shiftY`/`animatedStyle` above, so by the time the
+      // real splice lands, the transform and the new flex position agree
+      // and there's nothing left to animate.
       onLayout={(e) => onLayoutHeight(e.nativeEvent.layout.height)}
       style={[animatedStyle, isActive ? { zIndex: 10, elevation: 8, opacity: 0.95 } : null]}>
       {renderContent({ gesture, isDragging: isActive })}
