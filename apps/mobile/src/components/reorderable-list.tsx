@@ -14,15 +14,15 @@ const LONG_PRESS_DURATION_MS = 350;
 const DEFAULT_ROW_HEIGHT = 60;
 const JUST_DRAGGED_SUPPRESS_MS = 400;
 
-// Web-only: releasing a drag by the handle usually lands the finger over a
-// *different* row's card (the whole point of dragging is to move over other
-// rows). On web, `Pressable`'s own touch/click handling isn't aware the
-// GestureDetector on the handle just consumed this touch sequence, so the
-// row now under the finger can fire its own onPress right after — reported
-// as "dropping the drag often opens that item's detail screen". There's no
-// per-row relationship between the dragged row and whatever row ends up
-// under the finger, so this needs to be a flag every row's onPress can check,
-// not something threaded through props.
+// Releasing a drag usually lands the finger over a *different* row's card
+// (the whole point of dragging is to move over other rows). `Pressable`'s
+// own touch/press handling isn't aware the GestureDetector just consumed
+// this touch sequence, so the row now under the finger can fire its own
+// onPress right after — reported as "dropping the drag often opens that
+// item's detail screen or toggles its check-in", on both web and Android.
+// There's no per-row relationship between the dragged row and whatever row
+// ends up under the finger, so this needs to be a flag every row's onPress
+// can check, not something threaded through props.
 let lastDragEndedAt = 0;
 export function markDragJustEnded(): void {
   lastDragEndedAt = Date.now();
@@ -228,6 +228,20 @@ function DraggableRow<T>({
   // for this — plain assignment to `.value` (not `.current`) from the JS
   // thread, read back from JS-thread code, no cross-thread serialization
   // trap.
+  // Same staleness trap applies to `startOffsetY`/`currentOffsetY` — they're
+  // plain render-time values too, and `handleStart` (frozen inside the
+  // memoized gesture) would otherwise keep reading whatever this row's
+  // position was back when the gesture was last rebuilt. That rebuild only
+  // happens when `disabled` toggles (some *other* row starting/ending a
+  // drag), so dragging the *same* row twice in a row with nothing else
+  // dragged in between fed the second drag's math a stale starting
+  // position from before the first drag ever moved it — reported as a
+  // second drag on a just-reordered item behaving as if snapping back
+  // toward its old spot.
+  const currentOffsetYShared = useSharedValue(currentOffsetY);
+  useEffect(() => {
+    currentOffsetYShared.value = currentOffsetY;
+  }, [currentOffsetY, currentOffsetYShared]);
   const orderShared = useSharedValue(order);
   useEffect(() => {
     orderShared.value = order;
@@ -253,7 +267,7 @@ function DraggableRow<T>({
   }, [onDragEnd, onDragEndShared]);
 
   function handleStart() {
-    dragStartOffsetY.value = startOffsetY;
+    dragStartOffsetY.value = currentOffsetYShared.value;
     onDragStartShared.value.fn();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
   }
@@ -276,7 +290,12 @@ function DraggableRow<T>({
   }
 
   function handleEnd() {
-    if (Platform.OS === 'web') markDragJustEnded();
+    // Not web-only after all — reported on Android too (an emulator running
+    // with mouse-simulated touch, at least): dropping a drag over a
+    // different card sometimes fired that card's own onPress right after,
+    // opening its detail screen or toggling its check-in. Same fix either
+    // way: ignore presses for a brief window after any drag ends.
+    markDragJustEnded();
     onDragEndShared.value.fn();
   }
 
