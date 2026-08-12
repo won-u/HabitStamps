@@ -153,6 +153,20 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 
 **남은 것**: Major 12건(동기화 부분 실패 시 가짜 conflict 무한 반복, RPC 배치 전체 롤백, `check_ins` UNIQUE 제약 부재, `SECURITY DEFINER` 함수 3개 `search_path` 미고정, 스트릭 계산이 반복주기를 무시, `packages/core` 유닛 테스트 0개, 웹 빌드에서 `expo-secure-store`가 no-op이라 설정이 새로고침마다 초기화 등)와 Minor·Nit 17건은 아직 미착수 — 상세와 우선순위는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
 
+## 2026-08-12 Major 수정: 체크인 UNIQUE 제약, 테스트 인프라, 반복주기 인식 스트릭
+
+코드 리뷰의 Major 12건 중 우선순위 1~3번(체크인 데이터 무결성, 테스트 인프라, 스트릭 정확성)을 진행했다. 전체 목록/근거는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
+
+- **`packages/core`에 Vitest 도입**: RN 의존성이 없는 순수 TS 패키지라 별도 설정 없이 바로 동작한다. `apps/mobile`(React Native 컴포넌트)까지 테스트하려면 `jest-expo` 같은 훨씬 무거운 설정이 필요해 이번 범위에서는 제외 — 순수 함수 계층(`calculate-streak`/`period-counts`) 위주로 27개 테스트를 추가했다.
+- **스트릭 계산이 반복주기(frequencyType)를 반영하도록 재구현**: 기존 `calculateStreak()`은 프리퀀시를 전혀 모른 채 순수 달력일 연속성만으로 스트릭을 판정해서, weekdays/timesPerWeek/timesPerMonth 습관(4종 중 3종)은 정상적으로 쉬는 날도 전부 단절로 처리하고 있었다. `weekdays`는 지정된 요일만 필수로 요구하고 나머지 요일은 건너뛰며(`calculateScheduleStreak`), `timesPerWeek`/`timesPerMonth`는 완전히 지난 기간이 목표 미달일 때만 끊기도록(`calculatePeriodStreak`, 오늘이 속한 기간은 daily의 "오늘 미체크 허용"과 같은 취지로 아직 실패 판정하지 않음) 재구현했다. 두 경우 모두 `current`/`longest`는 체크인 횟수가 아니라 스트릭이 걸친 캘린더 일수로 표시해 반복주기와 무관하게 숫자가 비교 가능하도록 유지(예: 주3회 습관을 3주 연속 채우면 21일). 22개 유닛 테스트로 daily/weekdays/timesPerWeek/timesPerMonth 전 케이스를 커버했고, 안드로이드 에뮬레이터의 실제 습관 데이터로 재검증하니 한 습관의 현재 스트릭이 2일→25일, 최장 스트릭이 2~4일→7~27일로 바뀔 만큼 실질적인 차이가 있었다 — 카테고리 이름이 "Daily"라고 해서 그 습관의 실제 `frequencyType`도 daily라는 뜻은 아니라는 점(카테고리는 사용자가 임의로 붙인 이름일 뿐)이 이번에 헷갈리기 쉬운 지점으로 확인됐다.
+- **`check_ins`에 (habit_id, date) UNIQUE 제약 추가 + 충돌 병합**: architecture.md가 스스로 명시한 "`UNIQUE(habitId, date) WHERE deletedAt IS NULL`" 원칙과 실제 구현이 어긋나 있었다 — `toggle()`의 in-memory 락만으로 막고 있어서, 그 락을 거치지 않는 경로(두 기기가 오프라인 상태에서 같은 날 독립적으로 체크인한 뒤 동기화)에서 과거의 체크인 중복 생성 버그(§ 위 "2026-08-11 버그 수정: 체크인 중복 생성" 참고)가 재발해도 DB가 못 막았다.
+  - Postgres/로컬 SQLite(Drizzle) 양쪽에 partial unique index 추가. 기존에 이미 쌓여있을 수 있는 중복 활성 행은 인덱스 생성 전에 가장 먼저 만들어진 것만 남기고 정리하는 스텝을 마이그레이션/스키마 파일에 포함 — Docker Postgres와 `node:sqlite`로 실제 재현·검증했다.
+  - 단순히 제약만 추가하면 두 기기가 같은 날 독립적으로 체크인한 뒤 동기화될 때 두 번째 기기의 push가 제약 위반으로 실패하며 배치 전체가 막힐 수 있었다 — `sync_upsert_check_ins` RPC가 이 위반을 행 단위 예외로 잡아 그 행만 conflict로 처리하도록 변경(무관한 다른 행은 그대로 반영).
+  - 로컬 `applyRemoteChanges`(pull 적용 경로, 네이티브+웹)는 다른 기기가 이미 서버에 반영한 체크인이 내려왔는데 이 기기에 같은 (habit,date)의 다른 체크인이 있으면, 서버 쪽을 정본으로 채택하되 note/photo/value 중 이 기기에만 있는 값은 병합해 넣고 병합으로 내용이 바뀌면 `pending`으로 표시해 다음 push 때 그 병합 내용도 서버로 올라가게 했다 — 어느 쪽 데이터도 조용히 사라지지 않는다.
+  - **기존에 이미 Supabase 프로젝트를 설정해둔 사용자는 `docs/supabase-schema.sql` 전체를 SQL Editor에서 다시 실행해야 한다** — `create unique index if not exists`/`create or replace function` 위주라 재실행해도 안전하다.
+
+**남은 것**: Major 9건(동기화 부분 실패 시 가짜 conflict 방지, `SECURITY DEFINER` 함수 3개 `search_path` 고정, `frequencyConfig` 교차 검증 등)과 Minor·Nit 17건은 아직 미착수 — 상세는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*

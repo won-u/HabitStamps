@@ -57,15 +57,15 @@ Google OAuth Client Secret과 Supabase URL/anon key가 마크다운 파일로 �
 
 - **push() 부분 실패 시 이미 성공한 행이 "가짜 conflict"로 영구 고착** (`supabase-sync-gateway.ts:124-152`, `sync-engine.ts:38-44`) — habits/checkIns/categories 세 RPC를 순차 호출하다 하나가 실패하면 즉시 throw돼, 앞서 성공한 RPC는 서버엔 반영됐지만 로컬은 `pending`으로 남는다. 다음 sync 때 같은 값을 재전송하면 서버의 `where updated_at < excluded.updated_at`(엄격한 부등호) 조건에 걸려 반영 안 됨 → 클라이언트가 conflict로 오판 → 사용자가 다시 수정하기 전까지 매 sync마다 재전송·재실패를 반복.
 - **RPC 배치 한 행의 오류가 전체 배치를 롤백** (`supabase-schema.sql`의 `sync_upsert_*` 세 함수) — 함수 본문 전체가 암묵적 트랜잭션이라, 배치 중 한 행이라도 캐스팅 실패하면 같은 배치의 정상 행까지 통째로 롤백된다.
-- **`check_ins`에 (habit_id, date) UNIQUE 제약이 실제로는 없음** (`schema.ts:69-73`, `supabase-schema.sql:25-39`) — architecture.md가 스스로 명시한 원칙("`UNIQUE(habitId, date) WHERE deletedAt IS NULL`")과 실제 구현이 어긋난다. 지금은 `toggle()`의 in-memory 락으로만 막고 있어, 그 락을 거치지 않는 새 경로(pull 적용, 여러 탭/기기 동시 push)에서 과거의 체크인 중복 생성 버그가 재발해도 DB가 못 막는다.
+- **`check_ins`에 (habit_id, date) UNIQUE 제약이 실제로는 없음** (`schema.ts:69-73`, `supabase-schema.sql:25-39`) — ✅ **해결됨 (2026-08-12)**. architecture.md가 스스로 명시한 원칙("`UNIQUE(habitId, date) WHERE deletedAt IS NULL`")과 실제 구현이 어긋났었다. Postgres/SQLite 양쪽에 partial unique index를 추가하고, 기존에 쌓여있을 수 있는 중복은 정리 후 인덱스를 생성하도록 마이그레이션/스키마에 포함했다. 단순 추가만 하면 두 기기가 오프라인에서 같은 날 독립 체크인 후 동기화될 때 push가 실패하며 배치 전체가 막힐 수 있어, `sync_upsert_check_ins`의 예외 처리와 로컬 `applyRemoteChanges`의 충돌 병합(노트/사진/값을 잃지 않고 서버 쪽을 정본으로 병합)도 함께 구현했다. 상세는 roadmap.md 참고.
 - **`SECURITY DEFINER` RPC 3개에 `search_path` 미고정** (`supabase-schema.sql:85, 129, 168`) — Postgres/Supabase의 잘 알려진 search_path 하이재킹 패턴, Supabase Security Advisor가 "Function Search Path Mutable"로 표시하는 항목. (참고: 이번에 추가한 `sync_server_time()`은 처음부터 `search_path`를 고정해 작성했다.)
 
 ### 도메인 계층 (`packages/core`)
 
-- **스트릭 계산이 반복주기(frequencyType)를 전혀 모른다** (`calculate-streak.ts:36-76`) — 순수 달력일 연속성만으로 스트릭을 판정해서, weekdays/timesPerWeek/timesPerMonth 습관(4종 중 3종)은 정상적으로 쉬는 날도 전부 단절로 처리될 수 있다. 호출부의 사전 필터링 여부는 이번 리뷰에서 교차 확인하지 못함.
+- **스트릭 계산이 반복주기(frequencyType)를 전혀 모른다** (`calculate-streak.ts:36-76`) — ✅ **해결됨 (2026-08-12)**. 순수 달력일 연속성만으로 스트릭을 판정해서, weekdays/timesPerWeek/timesPerMonth 습관(4종 중 3종)은 정상적으로 쉬는 날도 전부 단절로 처리되고 있었다 — 실제 기기 데이터로 확인한 결과 한 습관의 스트릭이 2일→25일로 바뀔 만큼 실질적인 오차였다. weekdays는 지정 요일만 필수로 요구하고, timesPerWeek/timesPerMonth는 완전히 지난 기간이 목표 미달일 때만 끊기도록 재구현. 22개 유닛 테스트 추가.
 - **`frequencyConfig`가 `frequencyType`과 교차 검증되지 않음** (`habit.ts:7-26`, `habit-form.tsx:68-82`) — `frequencyType: "weekdays"`에 `weekdays: []`가 zod 검증도, UI의 `canSubmit`도 통과해 "0/0" 진행률의 영구 체크 불가 습관이 만들어질 수 있다.
 - **기간 카운트가 미래 날짜를 걸러내지 않음** (`period-counts.ts:29-33`) — `date <= today` 상한이 없어, 기기 시계 오차로 미래 날짜 체크인이 섞이면 "이번 주/이번 달/올해" 타일이 부풀려질 수 있다.
-- **`packages/core`에 유닛 테스트가 0개** — `calculate-streak.ts`/`period-counts.ts`는 주석에서 스스로 "pure, trivially testable"이라 밝히면서도 테스트가 없다. 위 두 Major 항목 모두 유닛 테스트만 있었어도 구현 시점에 잡혔을 가능성이 높다.
+- **`packages/core`에 유닛 테스트가 0개** — ✅ **해결됨 (2026-08-12)**. `calculate-streak.ts`/`period-counts.ts`는 주석에서 스스로 "pure, trivially testable"이라 밝히면서도 테스트가 없었다. Vitest를 도입하고 두 파일에 27개 테스트를 추가 — 위 스트릭 Major 항목은 실제로 이 테스트를 먼저 작성하며 구현했다. `packages/core` 전체의 다른 함수까지 포괄하는 것은 아니라 완전한 커버리지는 아님.
 - **정량 습관 `value`에 하한 없음** (`check-in.ts:16`) — 음수를 그대로 허용.
 
 ### UI / 앱 셸
@@ -116,6 +116,7 @@ Google OAuth Client Secret과 Supabase URL/anon key가 마크다운 파일로 �
 1. ~~`auth.md` 저장소 밖으로 이동~~ — ✅ 완료
 2. ~~`pull()` 워터마크를 서버 시각 기준으로 교체~~ — ✅ 완료 (Supabase 프로젝트에 `supabase-schema.sql` 재실행 필요)
 3. ~~`group-by-category.ts`의 카테고리 폴백 로직 통일~~ — ✅ 완료
-4. **calculate-streak / period-counts에 유닛 테스트 추가 후 frequencyType 반영** — 두 함수 모두 순수 함수라 테스트 비용이 낮고, 스트릭은 이 앱의 핵심 동기부여 기능
-5. **`check_ins`에 partial unique index 추가, `SECURITY DEFINER` 함수 3개에 `search_path` 고정** — DB 레벨 방어선을 설계 원칙과 실제로 일치시키는 작업, `supabase-schema.sql` 재실행만으로 반영 가능
+4. ~~calculate-streak / period-counts에 유닛 테스트 추가 후 frequencyType 반영~~ — ✅ 완료 (2026-08-12)
+5. ~~`check_ins`에 partial unique index 추가~~ — ✅ 완료 (2026-08-12, Supabase 프로젝트에 `supabase-schema.sql` 재실행 필요). `SECURITY DEFINER` 함수 3개(`sync_upsert_habits/check_ins/categories`)의 `search_path` 고정은 아직 미착수로 남음.
 6. **동기화 부분 실패 시 가짜 conflict 방지** — push()가 실패한 RPC 이전에 성공한 것만이라도 `markSynced`되도록 각 RPC 호출을 독립적으로 처리
+7. **`SECURITY DEFINER` 함수 3개(`sync_upsert_habits/check_ins/categories`)에 `search_path` 고정** — `sync_server_time()`/새 check_ins 예외 처리 블록에는 이미 적용된 패턴을 나머지에도 확장
