@@ -7,6 +7,7 @@ iOS 앱 [DayStamps](https://apps.apple.com/) 를 레퍼런스로 만든 개인/�
 > - [features.md](./docs/features.md) — 기능 범위(구현 완료/미구현/v2)
 > - [ux-design.md](./docs/ux-design.md) — 실제 구현된 화면별 UI/UX
 > - [roadmap.md](./docs/roadmap.md) — **현재 진행 상황**과 다음 단계
+> - [dev-guide.md](./docs/dev-guide.md) — 안드로이드 빌드, 웹 빌드+Cloudflare Pages 배포, Supabase 운영 실무 가이드
 
 ## 현재 상태 요약
 
@@ -43,7 +44,7 @@ pnpm --filter @habit-tracker/mobile android   # Android 에뮬레이터(Expo Go)
 pnpm --filter @habit-tracker/mobile ios       # iOS 시뮬레이터 (Mac 필요)
 ```
 
-일부 개발 환경에서는 Expo Go 클라이언트가 프로젝트 의존성과 미묘하게 안 맞아 크래시가 날 수 있다(겪었던 사례와 원인은 [docs/architecture.md](./docs/architecture.md) §5-5). 이런 경우 `npx expo run:android`로 이 프로젝트 전용 로컬 Dev Client를 빌드해 Expo Go 대신 쓴다 — 최초 빌드만 시간이 걸리고, 이후엔 Metro만 재시작하면 된다.
+일부 개발 환경에서는 Expo Go 클라이언트가 프로젝트 의존성과 미묘하게 안 맞아 크래시가 날 수 있다(겪었던 사례와 원인은 [docs/architecture.md](./docs/architecture.md) §5-5). 이런 경우 `npx expo run:android`로 이 프로젝트 전용 로컬 Dev Client를 빌드해 Expo Go 대신 쓴다 — 최초 빌드만 시간이 걸리고, 이후엔 Metro만 재시작하면 된다. `expo run:android --device <이름>`이 "Could not find device with name" 에러를 내는 환경도 있다(에뮬레이터 콘솔 인증 문제) — 그럴 땐 Gradle 직접 빌드로 우회한다. 안드로이드/웹 빌드+배포/Supabase 운영의 실무 절차는 [docs/dev-guide.md](./docs/dev-guide.md)에 정리했다.
 
 동기화는 별도 설정 없이 켜져 있다 — 설정 > 동기화에서 **Google로 로그인**하면 그 시점의 로컬 데이터가 이 앱이 소유한 고정 Supabase 프로젝트로 자동 업로드되고, 이후로는 로컬 변경 시 자동 push, 앱을 다시 열 때(포그라운드 복귀) 자동 pull이 일어난다. 로그인하지 않으면 완전히 로컬 전용으로 동작한다. Supabase 프로젝트 자체를 새로 만들거나 값을 바꾸고 싶다면 [docs/architecture.md](./docs/architecture.md) §5 참고.
 
