@@ -7,6 +7,7 @@ import { useRouter } from 'expo-router';
 
 import { useTheme } from '@/hooks/use-theme';
 import type { TodayHabit } from '@/features/today/use-today';
+import { wasDragJustEnded } from '@/components/reorderable-list';
 
 interface Props {
   item: TodayHabit;
@@ -34,6 +35,7 @@ export const HabitCard = memo(function HabitCard({ item, onToggle, dragHandle }:
   const animatedCircleStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
 
   function handleTogglePress() {
+    if (wasDragJustEnded()) return;
     scale.value = withSequence(withSpring(1.2, { duration: 120 }), withSpring(1, { duration: 150 }));
     onToggle();
   }
@@ -54,7 +56,10 @@ export const HabitCard = memo(function HabitCard({ item, onToggle, dragHandle }:
         { backgroundColor: cardBackground },
         dragHandle?.isDragging ? styles.dragging : null,
       ])}
-      onPress={() => router.push({ pathname: '/habit/[id]', params: { id: habit.id } })}>
+      onPress={() => {
+        if (wasDragJustEnded()) return;
+        router.push({ pathname: '/habit/[id]', params: { id: habit.id } });
+      }}>
       <Pressable onPress={handleTogglePress} hitSlop={10}>
         <Animated.View
           style={[

@@ -12,6 +12,24 @@ import * as Haptics from 'expo-haptics';
 
 const LONG_PRESS_DURATION_MS = 350;
 const DEFAULT_ROW_HEIGHT = 60;
+const JUST_DRAGGED_SUPPRESS_MS = 400;
+
+// Web-only: releasing a drag by the handle usually lands the finger over a
+// *different* row's card (the whole point of dragging is to move over other
+// rows). On web, `Pressable`'s own touch/click handling isn't aware the
+// GestureDetector on the handle just consumed this touch sequence, so the
+// row now under the finger can fire its own onPress right after — reported
+// as "dropping the drag often opens that item's detail screen". There's no
+// per-row relationship between the dragged row and whatever row ends up
+// under the finger, so this needs to be a flag every row's onPress can check,
+// not something threaded through props.
+let lastDragEndedAt = 0;
+export function markDragJustEnded(): void {
+  lastDragEndedAt = Date.now();
+}
+export function wasDragJustEnded(): boolean {
+  return Date.now() - lastDragEndedAt < JUST_DRAGGED_SUPPRESS_MS;
+}
 
 /**
  * Passed to `renderItem` so the caller decides what portion of the row is the
@@ -258,6 +276,7 @@ function DraggableRow<T>({
   }
 
   function handleEnd() {
+    if (Platform.OS === 'web') markDragJustEnded();
     onDragEndShared.value.fn();
   }
 

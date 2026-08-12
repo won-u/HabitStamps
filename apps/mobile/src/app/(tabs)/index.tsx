@@ -11,7 +11,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { HabitCard } from '@/components/habit-card';
 import { DatePickerModal } from '@/components/date-picker-modal';
-import { ReorderableList } from '@/components/reorderable-list';
+import { ReorderableList, wasDragJustEnded } from '@/components/reorderable-list';
 import { useTheme } from '@/hooks/use-theme';
 import { useToday, type TodayHabit } from '@/features/today/use-today';
 import { categoryRepository, habitRepository } from '@/composition/container';
@@ -40,10 +40,17 @@ export default function TodayScreen() {
 
   // The strip ends on `today`, so a fresh mount otherwise leaves the
   // ScrollView at its default (leftmost) offset — showing only past days with
-  // today itself scrolled off the right edge.
-  useEffect(() => {
+  // today itself scrolled off the right edge. A mount-time effect isn't
+  // reliable for this: it can fire before the ScrollView has actually
+  // measured its (font-dependent) content width, computing scrollToEnd
+  // against a too-small width and landing short of the real end — reported
+  // on a real device (web) as the strip showing several days *before* the
+  // current week instead of ending on today. `onContentSizeChange` fires
+  // whenever the actual content size is known, which is the correct signal
+  // to scroll on.
+  function handleStripContentSizeChange() {
     stripRef.current?.scrollToEnd({ animated: false });
-  }, []);
+  }
 
   const strip = useMemo(() => {
     const base = new Date(today);
@@ -101,15 +108,25 @@ export default function TodayScreen() {
    * sequence, flattened top-to-bottom — keeps flat views (e.g. the archive
    * screen) consistent with whatever order is shown here, regardless of
    * whether the drag that triggered this reordered groups or reordered
-   * items within one group. */
-  function persistFlatHabitOrder(groupsInOrder: Group[]) {
+   * items within one group.
+   *
+   * Only writes habits whose sortOrder actually changed (most drags move one
+   * item — rewriting all of them bumps updatedAt/version on rows nothing
+   * happened to, for no reason), and awaits every write via `Promise.all`
+   * before returning instead of firing them and moving on — a burst of
+   * unawaited writes racing the debounced auto-sync could let a push go out
+   * with only some of them applied, reported as the reordered list
+   * occasionally reverting a moment after the drop. */
+  async function persistFlatHabitOrder(groupsInOrder: Group[]) {
+    const updates: Promise<unknown>[] = [];
     let index = 0;
     for (const group of groupsInOrder) {
       for (const item of group.items) {
-        void habitRepository.update(item.habit.id, { sortOrder: index });
+        if (item.habit.sortOrder !== index) updates.push(habitRepository.update(item.habit.id, { sortOrder: index }));
         index++;
       }
     }
+    await Promise.all(updates);
   }
 
   function handleReorderGroups(newGroups: Group[]) {
@@ -117,11 +134,11 @@ export default function TodayScreen() {
       if (group.key === DEFAULT_GROUP_KEY) setDefaultGroupSortOrder(index);
       else void categoryRepository.update(group.key, { sortOrder: index });
     });
-    persistFlatHabitOrder(newGroups);
+    void persistFlatHabitOrder(newGroups);
   }
 
   function handleReorderItemsInGroup(groupKey: string, newItems: TodayHabit[]) {
-    persistFlatHabitOrder(groups.map((group) => (group.key === groupKey ? { ...group, items: newItems } : group)));
+    void persistFlatHabitOrder(groups.map((group) => (group.key === groupKey ? { ...group, items: newItems } : group)));
   }
 
   const viewedDateObj = new Date(viewedDate);
@@ -157,6 +174,7 @@ export default function TodayScreen() {
         ref={stripRef}
         horizontal
         showsHorizontalScrollIndicator={false}
+        onContentSizeChange={handleStripContentSizeChange}
         contentContainerStyle={styles.stripContent}
         style={styles.strip}>
         {strip.map((day) => {
@@ -239,7 +257,10 @@ export default function TodayScreen() {
               const header = (
                 <Pressable
                   style={[styles.groupHeader, dragHandle.isDragging ? { opacity: 0.6 } : null]}
-                  onPress={() => toggleGroupCollapsed(group.key)}>
+                  onPress={() => {
+                    if (wasDragJustEnded()) return;
+                    toggleGroupCollapsed(group.key);
+                  }}>
                   {headerContent}
                 </Pressable>
               );
