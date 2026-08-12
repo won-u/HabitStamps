@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -204,7 +204,7 @@ export default function TodayScreen() {
           </Link>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.list}>
+        <ScrollView style={styles.listScroll} contentContainerStyle={styles.list}>
           <ReorderableList
             data={groups}
             keyExtractor={(group) => group.key}
@@ -212,33 +212,56 @@ export default function TodayScreen() {
             renderItem={(group, dragHandle) => {
               const isCollapsed = collapsedGroups.has(group.key);
               const groupCompleted = group.items.filter((item) => item.isCheckedForViewedDate).length;
+              // 웹은 헤더 전체가 아니라 전용 손잡이 아이콘만 드래그 영역으로 쓴다
+              // — components/reorderable-list.tsx의 DragHandle 문서 참고
+              // (react-native-gesture-handler의 웹 구현이 스크롤 가능한
+              // ScrollView 안에서 Pan+activateAfterLongPress를 지원 못 하는
+              // 알려진 미해결 이슈라, 헤더 전체를 감싸는 한 근본적으로
+              // 못 고친다). 네이티브는 기존처럼 헤더 전체 롱프레스로 동작.
+              const headerContent = (
+                <>
+                  <Ionicons name={isCollapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={theme.textSecondary} />
+                  <ThemedText type="smallBold" style={styles.groupTitle}>
+                    {group.name}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    {groupCompleted}/{group.items.length}
+                  </ThemedText>
+                  {Platform.OS === 'web' ? (
+                    <GestureDetector gesture={dragHandle.gesture}>
+                      <View hitSlop={8} style={styles.groupDragHandle}>
+                        <Ionicons name="reorder-three" size={20} color={theme.textSecondary} />
+                      </View>
+                    </GestureDetector>
+                  ) : null}
+                </>
+              );
+              const header = (
+                <Pressable
+                  style={[styles.groupHeader, dragHandle.isDragging ? { opacity: 0.6 } : null]}
+                  onPress={() => toggleGroupCollapsed(group.key)}>
+                  {headerContent}
+                </Pressable>
+              );
               return (
                 <View style={styles.groupSection}>
-                  <GestureDetector gesture={dragHandle.gesture}>
-                    <Pressable
-                      style={[styles.groupHeader, dragHandle.isDragging ? { opacity: 0.6 } : null]}
-                      onPress={() => toggleGroupCollapsed(group.key)}>
-                      <Ionicons name={isCollapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={theme.textSecondary} />
-                      <ThemedText type="smallBold" style={styles.groupTitle}>
-                        {group.name}
-                      </ThemedText>
-                      <ThemedText type="small" themeColor="textSecondary">
-                        {groupCompleted}/{group.items.length}
-                      </ThemedText>
-                    </Pressable>
-                  </GestureDetector>
+                  {Platform.OS === 'web' ? header : <GestureDetector gesture={dragHandle.gesture}>{header}</GestureDetector>}
                   {isCollapsed ? null : (
                     <ReorderableList
                       data={group.items}
                       keyExtractor={(item) => item.habit.id}
                       onReorder={(newItems) => handleReorderItemsInGroup(group.key, newItems)}
-                      renderItem={(item, itemHandle) => (
-                        <GestureDetector gesture={itemHandle.gesture}>
-                          <View style={itemHandle.isDragging ? styles.draggingItem : null}>
-                            <HabitCard item={item} onToggle={() => toggleCheckIn(item.habit)} />
-                          </View>
-                        </GestureDetector>
-                      )}
+                      renderItem={(item, itemHandle) =>
+                        Platform.OS === 'web' ? (
+                          <HabitCard item={item} onToggle={() => toggleCheckIn(item.habit)} dragHandle={itemHandle} />
+                        ) : (
+                          <GestureDetector gesture={itemHandle.gesture}>
+                            <View style={itemHandle.isDragging ? styles.draggingItem : null}>
+                              <HabitCard item={item} onToggle={() => toggleCheckIn(item.habit)} />
+                            </View>
+                          </GestureDetector>
+                        )
+                      }
                     />
                   )}
                 </View>
@@ -271,13 +294,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
+    flexShrink: 0,
   },
   headerDate: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerDateText: { fontSize: 30, lineHeight: 34 },
   weekdayBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   headerActions: { flexDirection: 'row', gap: 4 },
   headerIconButton: { padding: 6 },
-  strip: { marginTop: 16, flexGrow: 0 },
+  strip: { marginTop: 16, flexGrow: 0, flexShrink: 0 },
   stripContent: { paddingHorizontal: 20, gap: 8 },
   stripDay: {
     width: 52,
@@ -295,12 +319,15 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 4,
     paddingHorizontal: 20,
+    flexShrink: 0,
   },
+  listScroll: { flex: 1 },
   list: { paddingHorizontal: 20, paddingBottom: 100 },
   groupSection: { marginTop: 16 },
   groupHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
   draggingItem: { opacity: 0.85 },
   groupTitle: { flex: 1 },
+  groupDragHandle: { padding: 2 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   emptySubtitle: { marginTop: 8, marginBottom: 20, textAlign: 'center' },
   cta: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 },
