@@ -126,6 +126,14 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 - **발견한 함정**: 최초 `register()` 호출 시점의 그 페이지 로드 자체는 SW가 아직 활성화되기 전이라 캐시되지 않는다 — install 단계에서 `/`를 미리 fetch해 그 안의 스크립트/스타일시트 URL까지 정규식으로 뽑아 사전 캐싱하지 않으면, 완전한 최초 방문 후 바로 오프라인으로 전환 시 셸 자체가 비어 로드에 실패했다. Playwright로 "온라인 최초 방문 → `setOffline(true)` → 새로고침"을 재현해 발견, 사전 캐싱 추가 후 재검증(오프라인 새로고침 스크린샷이 온라인 때와 동일).
 - 앱 아이콘: 커스텀 브랜딩이 없어(iOS 네이티브도 Expo 기본 템플릿 아이콘 그대로) 기존 아이콘을 배경색(`#F9F8F6`)에 합성해 재사용. 커스텀 아이콘 디자인은 별도 작업으로 남김.
 
+## 2026-08-12 배포: Cloudflare Pages + 웹 로그인 버그 수정
+
+`expo export -p web`의 `dist/`를 실제로 Cloudflare Pages(`wrangler pages deploy`)에 배포하며 발견/해결한 것들.
+
+- `/habit/[id]`, `/habit/[id]/edit`처럼 빌드 시점에 실제 ID를 알 수 없는 동적 라우트는 `dist/habit/[id].html` 같은 템플릿 파일로만 export된다. Cloudflare Pages는 존재하는 파일 경로가 없으면 404를 내므로, `apps/mobile/public/_redirects`에 `/habit/:id` → `/habit/[id].html` 200 규칙을 추가해 실제 습관 ID로 들어오는 딥링크/새로고침이 깨지지 않게 했다.
+- **웹 로그인이 에러 없이 조용히 실패하는 버그 발견**: 배포 후 실제 iOS에서 (홈 화면에 설치한 PWA로) Google 로그인을 하면 팝업 완료 후 설정 화면이 계속 로그아웃 상태로 남았다. 원인은 standalone PWA 모드의 `window.open`이 진짜 팝업이 아니라 같은 WKWebView를 이동시켜버려서, `openAuthSessionAsync`의 팝업-완료 통지(`postMessage`) 경로 자체가 성립하지 않는 것. `auth-callback.tsx`에 웹 전용 fallback(URL에서 직접 토큰 파싱 후 `setSession()`)을 추가해 해결 — 상세는 `docs/architecture.md` §5-3.
+- 그 전 단계에서 별도로 겪은 것(코드 문제 아님): Supabase Authentication의 Redirect URLs 허용 목록에 새 배포 도메인을 추가하지 않으면, Supabase가 기본 Site URL(네이티브용 `habittracker://…`)로 리다이렉트해버려 Safari가 "유효하지 않은 주소" 에러를 띄운다 — 배포 도메인을 추가해 해결.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*
