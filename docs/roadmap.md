@@ -93,6 +93,53 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 - 태블릿의 `habit-tracker.db` 파일을 꺼내 그 29개 row만 `deleted_at`을 채워 soft-delete한 뒤 다시 기기에 써넣는 방식으로 정리(사용자 승인 후 진행 — 자동 모드 안전장치가 로컬 DB 직접 수정을 1차 차단했으나, 무엇을 왜 하려는지 설명 후 명시적 허락을 받아 진행).
 - 정리 후 태블릿에서 "제라도 301EXX"가 정상적으로 3/3 표시되는 것, 폰 쪽은 원래부터 중복이 없었던 것(서버와 84 vs 83으로 거의 일치, 날짜 중복 없음)까지 확인 완료.
 
+## 2026-08-11 기능 추가: 오늘 화면 그룹·습관 드래그 재정렬
+
+오늘 화면에서 그룹(카테고리) 순서와 그룹 내 습관 순서를 롱터치+드래그로 바꿀 수 있게 했다. `Habit`/`Category` 모델에는 이미 `sortOrder` 필드가 있었고 로컬 저장소의 `list()`가 이미 그 값으로 정렬하고 있었지만, 정작 사용자가 그 값을 바꿀 UI가 없었다.
+
+- **`react-native-draggable-flatlist` 같은 서드파티 라이브러리를 새로 추가하지 않았다** — 이 프로젝트는 RN 0.86 + Reanimated 4(New Architecture)라는 최신 조합을 쓰고 있어서, 그 조합에 대한 호환성이 검증되지 않은 라이브러리를 들이는 리스크보다 이미 설치돼 있던 `react-native-gesture-handler`/`react-native-reanimated`(둘 다 `habit-card.tsx`의 체크 애니메이션 등에서 이미 쓰이고 있음) 위에 직접 만드는 쪽을 택했다. `apps/mobile/src/components/reorderable-list.tsx`에 범용 세로 드래그 재정렬 컴포넌트를 새로 구현 — 화면이 FlatList가 아니라 몇 개 섹션을 가진 단일 ScrollView 구조라 가벼운 자체 구현으로 충분했다.
+- `Gesture.Pan().activateAfterLongPress(350)`으로 "롱터치 후 드래그"를 구현 — 일반 탭은 그대로 카드/헤더의 기존 `Pressable`/`Link`에 도달하고, 350ms 이상 누르고 있을 때만 드래그가 시작된다.
+- 행마다 실제 높이를 `onLayout`으로 측정해 누적 오프셋을 계산 — 습관 카드(고정 높이)와 그룹 전체 블록(헤더+가변 개수의 카드, 접힘 여부에 따라 높이가 또 달라짐) 양쪽에 재사용하기 위해서다.
+- 그룹을 드래그할 때 그 안의 습관 카드까지 같이 끌려오지 않도록, `renderItem`이 드래그 제스처를 직접 노출하는 render-prop 패턴(`DragHandle`)으로 설계 — 그룹은 헤더에만 제스처를 걸고, 습관 목록은 별도의 중첩된 `ReorderableList`로 각자 자기 카드에 제스처를 건다.
+- **버그 1**: `GestureDetector must be used as a descendant of GestureHandlerRootView` — Expo Router가 이 프로젝트 버전에서는 루트를 자동으로 감싸주지 않았다. `app/_layout.tsx`에서 `GestureHandlerRootView`로 명시적으로 감싸 해결.
+- **버그 2 (제스처가 중간에 멈추는 문제)**: `onEnd`에서만 커밋(잠금 해제 + 저장)을 하고 있었는데, `adb shell input draganddrop`으로 만든 합성 터치 이벤트가 정상적인 `onEnd`를 안 타고 취소되는 경우가 있어 드래그가 영원히 "잠긴" 채로 남았다(재시작 전까지 다른 갱신도 안 먹힘). 항상 호출되는 `onFinalize`로 커밋을 옮겨 해결.
+- **버그 3 (가장 까다로웠던 것)**: 그룹을 재정렬해도 화면이 갱신되지 않고 이전 순서를 계속 보여줬다 — DB에는 새 순서가 정확히 저장되는데도 그랬다. 원인은 `ReorderableList`의 재동기화 로직이 "키 시퀀스가 같으면 아무것도 안 한다"였던 것: 그룹 자체의 key(카테고리 id)는 습관 순서가 바뀌어도 그대로이므로 "같다"고 판단해 그룹의 새 `items` 내용을 절대 안 받아들이고 있었다. 키 시퀀스는 로컬 상태 그대로 유지하되, 각 항목의 실제 객체는 항상 최신 `data`에서 다시 가져오도록 수정.
+- 태블릿+폰 두 기기 모두에서 습관 재정렬/그룹 재정렬 각각 실기기(에뮬레이터) 드래그로 검증 — 재정렬 직후 화면 즉시 반영, DB에 정확한 `sortOrder` 저장, 앱 재시작 후에도 유지되는 것까지 확인. `sortOrder`는 다른 필드처럼 그대로 동기화되므로, 한 기기에서 재정렬하면 다른 기기에도 그 순서가 그대로 전파된다.
+
+## 2026-08-11 기능 추가: 웹 빌드용 IndexedDB 저장소 (PWA 준비)
+
+아이폰에서 Xcode 무료 서명(7일마다 재설치 필요)이 번거로워, PWA 방향을 검토하던 중 "로그인 필수로 하면 로컬 DB 자체가 필요 없지 않냐"는 질문이 나왔다가, 오프라인 사용이 실제로 필요하다는 결론으로 다시 로컬 우선(local-first) 구조를 웹에도 유지하기로 했다.
+
+- 이 프로젝트는 Expo Router 기반이라 별도 웹앱 없이 `expo start --web`/`expo export -p web`으로 같은 코드베이스가 웹 빌드로 나온다. 웹엔 `expo-sqlite`가 없으므로 `apps/mobile/src/data/local/*-repository.web.ts` 세 개(habit/check-in/category)를 IndexedDB(`idb` 라이브러리) 기반으로 새로 구현 — Metro의 플랫폼별 파일 확장자 해석(`*.web.ts`가 웹에서 우선 매칭)을 이용해 `composition/container.ts`를 비롯한 기존 코드는 한 줄도 안 바꿨다. 상세 설계는 `docs/architecture.md` §3-4 참고.
+- `SyncEngine`/`SyncGateway`/충돌 해소 로직은 저장소를 가리지 않게 이미 설계돼 있어서 100% 그대로 재사용 — 웹에서도 Supabase 로그인·자동 동기화가 그대로 동작한다.
+- `_layout.tsx`가 SQLite 전용 `useMigrations`를 직접 부르지 않도록 `use-db-ready.ts`(네이티브)/`use-db-ready.web.ts`(웹)로 분리 — 웹 빌드가 Drizzle 마이그레이션 코드를 아예 번들하지 않게 했다.
+- **검증**: 이 환경엔 GUI 브라우저가 없어서 Playwright+Chromium을 새로 설치해 헤드리스로 검증했다 — 습관 생성 → 체크인 토글 → 페이지 새로고침까지 실제 웹 페이지에서 수행하고, `indexedDB`를 직접 열어 새로고침 전후 데이터가 동일하게 남아있는 것을 확인. 오늘 화면 드래그 재정렬도 실제 마우스 이벤트(`mousedown` → 350ms 대기 → `mousemove` → `mouseup`)로 재현해 웹에서 동일하게 동작함을 확인했다.
+- **이 검증 중 발견한 버그(플랫폼 무관, 안드로이드에도 있던 버그)**: `ReorderableList`의 제스처가 실제로 활성화 안 된 일반 탭에서도 `onFinalize`가 호출되면서 `onReorder`가 매번 실행되고 있었다 — 체크인 토글처럼 드래그와 무관한 탭마다 모든 습관의 `sortOrder`가 불필요하게 재저장되는 부작용이 있었다. IndexedDB 전후 스냅샷 비교로 습관의 `updatedAt`/`version`이 체크인 토글 때마다 같이 바뀌는 걸 보고 발견 — `onStart`에서만 세우는 `hasActivated` 플래그로 실제 드래그가 시작된 경우에만 커밋하도록 수정.
+- 안드로이드 에뮬레이터에서도 재확인해 이번 변경으로 인한 회귀가 없는 것 확인.
+
+## 2026-08-12 기능 추가: PWA 매니페스트 + 오프라인 앱 셸 캐싱
+
+"제대로 된 앱처럼" 설치되게 해달라는 요청 — 위 IndexedDB 작업은 데이터 오프라인만 담당했고, 앱 코드 자체(HTML/JS/CSS)를 오프라인에서 불러오는 부분이 빠져 있었다.
+
+- `src/app/+html.tsx`(신규) + `public/manifest.json`(신규): 홈 화면 설치, iOS Safari 전용 상태바/전체화면 메타 태그, 라이트/다크 `theme-color`. `app.json`의 `web.*` 필드는 이 export 방식에서 매니페스트를 생성해주지 않는 것을 확인해 `+html.tsx` 수동 오버라이드로 대체.
+- `public/sw.js`(신규, 수동 작성 Service Worker): 같은 origin GET 요청을 캐시 우선으로 서빙하고 백그라운드로 갱신, 다른 origin(Supabase)은 그대로 통과. 상세는 `docs/architecture.md` §3-5 참고.
+- **발견한 함정**: 최초 `register()` 호출 시점의 그 페이지 로드 자체는 SW가 아직 활성화되기 전이라 캐시되지 않는다 — install 단계에서 `/`를 미리 fetch해 그 안의 스크립트/스타일시트 URL까지 정규식으로 뽑아 사전 캐싱하지 않으면, 완전한 최초 방문 후 바로 오프라인으로 전환 시 셸 자체가 비어 로드에 실패했다. Playwright로 "온라인 최초 방문 → `setOffline(true)` → 새로고침"을 재현해 발견, 사전 캐싱 추가 후 재검증(오프라인 새로고침 스크린샷이 온라인 때와 동일).
+- 앱 아이콘: 커스텀 브랜딩이 없어(iOS 네이티브도 Expo 기본 템플릿 아이콘 그대로) 기존 아이콘을 배경색(`#F9F8F6`)에 합성해 재사용. 커스텀 아이콘 디자인은 별도 작업으로 남김.
+
+## 2026-08-12 배포: Cloudflare Pages + 웹 로그인 버그 수정
+
+`expo export -p web`의 `dist/`를 실제로 Cloudflare Pages(`wrangler pages deploy`)에 배포하며 발견/해결한 것들.
+
+- `/habit/[id]`, `/habit/[id]/edit`처럼 빌드 시점에 실제 ID를 알 수 없는 동적 라우트는 `dist/habit/[id].html` 같은 템플릿 파일로만 export된다. Cloudflare Pages는 존재하는 파일 경로가 없으면 404를 내므로, `apps/mobile/public/_redirects`에 `/habit/:id` → `/habit/[id].html` 200 규칙을 추가해 실제 습관 ID로 들어오는 딥링크/새로고침이 깨지지 않게 했다.
+- **웹 로그인이 에러 없이 조용히 실패하는 버그 발견**: 배포 후 실제 iOS에서 (홈 화면에 설치한 PWA로) Google 로그인을 하면 팝업 완료 후 설정 화면이 계속 로그아웃 상태로 남았다. 원인은 standalone PWA 모드의 `window.open`이 진짜 팝업이 아니라 같은 WKWebView를 이동시켜버려서, `openAuthSessionAsync`의 팝업-완료 통지(`postMessage`) 경로 자체가 성립하지 않는 것. `auth-callback.tsx`에 웹 전용 fallback(URL에서 직접 토큰 파싱 후 `setSession()`)을 추가해 해결 — 상세는 `docs/architecture.md` §5-3.
+- 그 전 단계에서 별도로 겪은 것(코드 문제 아님): Supabase Authentication의 Redirect URLs 허용 목록에 새 배포 도메인을 추가하지 않으면, Supabase가 기본 Site URL(네이티브용 `habittracker://…`)로 리다이렉트해버려 Safari가 "유효하지 않은 주소" 에러를 띄운다 — 배포 도메인을 추가해 해결.
+- **실제 습관 데이터로 테스트해서야 드러난 today 화면 버그**: 로그인 성공 후 실제 계정 데이터(습관 여러 개)로 열어보니 상단 날짜 스트립이 짤리고, 목록이 스크롤 안 되고, 화면 맨 아래 흰 여백이 보이는 문제가 나왔다. 원인은 습관 목록 `ScrollView`에 높이 제약(`style`)이 없어 콘텐츠 전체 높이로 늘어나버린 것 하나였다 — 이제까지의 자동 테스트는 전부 "습관 0개" 빈 상태만 확인해서 놓쳤다. `style={{flex:1}}` 추가 + 날짜 스트립 `flexShrink:0`으로 해결, 가짜 습관 20개로 재현·검증. 상세는 `docs/architecture.md` §3-5.
+- **웹에서 드래그 재정렬이 안 되던 문제 — 원인 3가지**: (1) `HabitCard`가 `<a href>`로 렌더링돼 Safari의 링크 관련 기본 동작들(롱프레스 미리보기, 탭 하이라이트 등)이 드래그와 충돌 → `Link asChild`를 걷어내고 `Pressable` + `router.push()`로 교체해 앵커 자체를 없앰. (2) `Gesture.Pan()`이 매 렌더 새로 만들어져 진행 중인 터치가 끊기던 문제 → `useMemo`로 안정화하고 콜백이 읽는 값은 `useSharedValue`로 교체(처음 `useRef`로 시도했으나 Reanimated 워클릿 경계를 침범해 예전 스냅샷만 돌려주는 문제가 있었음 — `adb logcat`의 워클릿 경고로 발견). (3) 스크롤 가능한 목록에서만 재현되던 문제(사용자가 "그룹 여러 개"가 아니라 "스크롤 필요 여부"라는 걸 직접 격리해준 게 결정적) → `react-native-gesture-handler`의 확인된 미해결 웹 이슈([#2622](https://github.com/software-mansion/react-native-gesture-handler/issues/2622))였다: 롱프레스 Pan 제스처가 스크롤 가능한 ScrollView 안에 있으면 웹 구현이 그 요소를 터치-스크롤 후보에서 마운트 시점에 아예 제외해버려서 타이밍을 아무리 손봐도(React state 버전, DOM 직접 조작 버전 둘 다 시도) 고칠 수 없었다. 최종 해결: 웹에서만 카드/헤더 전체가 아니라 오른쪽의 작은 전용 손잡이 아이콘만 드래그 영역으로 삼는다(대부분의 웹 정렬 라이브러리가 쓰는 표준 해법) — 네이티브는 기존처럼 카드/헤더 전체 롱프레스 유지. 안드로이드(`adb shell input draganddrop`)와 웹(Playwright) 양쪽 최종 검증 완료 — 상세는 `docs/architecture.md` §3-5.
+- **위 수정들이 실기기에 안 보이는 문제 → Service Worker 캐시 버전 미변경이 원인**: `sw.js` 내용을 여러 번 고쳤는데도 실기기에서 계속 옛 버전처럼 동작해서 확인해보니, `CACHE_NAME`을 한 번도 안 올려서 브라우저가 `/sw.js`가 바이트 단위로 똑같다고 보고 새 버전을 설치조차 안 하고 있었다. `CACHE_NAME`을 `v1→v2`로 올려 강제 갱신시켰고, 겸사겸사 캐싱 전략도 바꿨다: 그동안 HTML 문서(내비게이션 요청)까지 캐시 우선이라 "배포해도 새로고침하면 계속 옛 화면"이 될 수 있는 구조였던 것 — 이제 문서는 네트워크 우선(오프라인일 때만 캐시 폴백)으로, 콘텐츠 해시가 붙는 정적 자산만 캐시 우선으로 유지한다. 앞으로 `sw.js`를 고칠 때는 매번 `CACHE_NAME`도 같이 올려야 한다는 걸 `docs/architecture.md` §3-5에 기록.
+- **손잡이 드래그 도입 후 실기기에서 드러난 3가지 자잘한 버그**: (1) 오늘 화면 상단 날짜 스트립이 항상 오늘로 끝나야 하는데, 마운트 시점 `useEffect`에서 `scrollToEnd()`를 부르는 게 실제 콘텐츠 폭이 측정되기 전에 실행돼 짧게 스크롤되는 경우가 있었다 — `ScrollView`의 `onContentSizeChange`(콘텐츠 크기가 실제로 확정될 때 호출됨)로 옮겨 해결. (2) 드래그해서 놓으면, 손가락이 그 시점에 올라가 있는 **다른** 카드의 탭이 잘못 발동해 그 항목 상세 화면으로 들어가거나 체크인이 토글되는 문제 — 처음엔 웹만의 문제로 보고 웹에서만 가드를 걸었는데, 안드로이드 에뮬레이터에서도 같은 증상이 재현돼 네이티브에도 똑같이 적용했다(`markDragJustEnded`/`wasDragJustEnded`, ~400ms). (3) 재정렬 후 가끔 순서가 되돌아가는 느낌 — `persistFlatHabitOrder`가 매번 그룹의 **모든** 습관에 `sortOrder`를 다시 쓰면서 (바뀌지 않은 것까지) 각각 `await` 없이 쐈었다 — 실제로 바뀐 것만 쓰도록 하고 `Promise.all`로 전부 끝난 뒤 반환하도록 고쳤다(디바운스된 자동 동기화가 일부만 반영된 상태로 도는 걸 방지).
+- **네이티브에서도 재현된 진짜 원인: 같은 항목을 연달아 두 번 드래그하면 옛 위치 기준으로 계산됨**: "1을 옮겨서 2,1,3,4가 된 직후, 1을 다시 드래그하면 이상하게 동작(1,2,3,4로 돌아가는 것처럼 보임)"으로 보고됐다. 원인: `handleStart`가 그 행의 시작 위치(`startOffsetY`)를 제스처가 마지막으로 다시 만들어졌을 때의 값으로 계속 참조하고 있었다 — 그 제스처는 `disabled` prop이 바뀔 때만(다른 행이 드래그를 시작/종료할 때) 다시 만들어지는데, 같은 행을 연달아 두 번 드래그하는 사이에 다른 행의 드래그가 끼지 않으면 이 재생성이 한 번도 안 일어나서, 두 번째 드래그가 **첫 번째 드래그가 있기 전의** 위치를 기준으로 계산됐다. `order`/`heights`와 같은 방식으로 `useSharedValue` + `useEffect`로 매 렌더 최신값을 동기화하도록 고쳤다. `adb shell input draganddrop`으로 "같은 항목 연속 두 번 드래그"를 재현·검증(짧은 duration은 롱프레스 활성화가 잘 안 돼서 재현 자체가 방해됐다 — 1.5초 이상으로 늘려야 안정적으로 재현/검증됨).
+- **아이폰 PWA에서 "여러 칸 끌어도 한 칸만 이동"하던 문제 — 드래그 중 실제 배열/DOM을 재배치하던 게 원인**: 안드로이드에서는 이미 여러 칸 연속 이동이 되는 걸 확인했는데도 아이폰 PWA(손잡이 드래그)에서는 계속 한 칸씩만 옮겨졌다. 기존 구현은 임계값을 넘을 때마다 곧바로 실제 배열을 스플라이스해 DOM 자식 순서까지 매번 바꾸고 있었는데, iOS Safari는 터치 중인 요소의 DOM이 바뀌면 그 터치를 취소하는 것으로 알려져 있어 — 첫 재배치 직후 제스처가 끝나버리는 것과 정확히 들어맞는다(이 샌드박스에서 실기기로 직접 재현하진 못했고, 실제 웹 드래그 라이브러리들의 공통 패턴에 근거해 고쳤다 — 최종 확인은 사용자 실기기 테스트 필요). `reorderable-list.tsx`를 리팩터링해 드래그 중엔 실제 배열을 건드리지 않고 목표 위치(`dragToIndex`)만 기억하며, 사이에 낀 다른 행들은 `shiftY`로 시각적으로만 비켜서게 하고, 실제 스플라이스는 손을 뗄 때 한 번만 하도록 바꿨다. 안드로이드에서 리팩터링 전후로 다시 검증해 회귀 없음을 확인. 상세는 `docs/architecture.md` §3-5 11차.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*

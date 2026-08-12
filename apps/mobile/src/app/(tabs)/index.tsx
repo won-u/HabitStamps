@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { GestureDetector } from 'react-native-gesture-handler';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { format, subDays } from 'date-fns';
@@ -10,9 +11,11 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { HabitCard } from '@/components/habit-card';
 import { DatePickerModal } from '@/components/date-picker-modal';
+import { ReorderableList, wasDragJustEnded } from '@/components/reorderable-list';
 import { useTheme } from '@/hooks/use-theme';
 import { useToday, type TodayHabit } from '@/features/today/use-today';
-import { categoryRepository } from '@/composition/container';
+import { categoryRepository, habitRepository } from '@/composition/container';
+import { useSettingsStore } from '@/state/settings-store';
 
 const DATE_STRIP_DAYS = 10;
 const DEFAULT_GROUP_KEY = '__default__';
@@ -30,15 +33,24 @@ export default function TodayScreen() {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
   const stripRef = useRef<ScrollView>(null);
+  const defaultGroupSortOrder = useSettingsStore((state) => state.defaultGroupSortOrder);
+  const setDefaultGroupSortOrder = useSettingsStore((state) => state.setDefaultGroupSortOrder);
 
   useEffect(() => categoryRepository.observe().subscribe(setCategories), []);
 
   // The strip ends on `today`, so a fresh mount otherwise leaves the
   // ScrollView at its default (leftmost) offset — showing only past days with
-  // today itself scrolled off the right edge.
-  useEffect(() => {
+  // today itself scrolled off the right edge. A mount-time effect isn't
+  // reliable for this: it can fire before the ScrollView has actually
+  // measured its (font-dependent) content width, computing scrollToEnd
+  // against a too-small width and landing short of the real end — reported
+  // on a real device (web) as the strip showing several days *before* the
+  // current week instead of ending on today. `onContentSizeChange` fires
+  // whenever the actual content size is known, which is the correct signal
+  // to scroll on.
+  function handleStripContentSizeChange() {
     stripRef.current?.scrollToEnd({ animated: false });
-  }, []);
+  }
 
   const strip = useMemo(() => {
     const base = new Date(today);
@@ -67,15 +79,21 @@ export default function TodayScreen() {
       else byCategory.set(key, [item]);
     }
 
-    const result: Group[] = [];
+    // "기본" isn't a Category row (no synced sortOrder of its own), so its
+    // position among the real categories is tracked as a local preference
+    // and merged into the same numeric ordering space here.
+    const entries: { sortOrder: number; group: Group }[] = [];
     const defaultItems = byCategory.get(DEFAULT_GROUP_KEY);
-    if (defaultItems) result.push({ key: DEFAULT_GROUP_KEY, name: '기본', items: defaultItems });
+    if (defaultItems) {
+      entries.push({ sortOrder: defaultGroupSortOrder, group: { key: DEFAULT_GROUP_KEY, name: '기본', items: defaultItems } });
+    }
     for (const category of categories) {
       const bucket = byCategory.get(category.id);
-      if (bucket) result.push({ key: category.id, name: category.name, items: bucket });
+      if (bucket) entries.push({ sortOrder: category.sortOrder, group: { key: category.id, name: category.name, items: bucket } });
     }
-    return result;
-  }, [items, categories]);
+    entries.sort((a, b) => a.sortOrder - b.sortOrder);
+    return entries.map((entry) => entry.group);
+  }, [items, categories, defaultGroupSortOrder]);
 
   function toggleGroupCollapsed(key: string) {
     setCollapsedGroups((prev) => {
@@ -84,6 +102,43 @@ export default function TodayScreen() {
       else next.add(key);
       return next;
     });
+  }
+
+  /** Reassigns every habit's sortOrder from its position in the given group
+   * sequence, flattened top-to-bottom — keeps flat views (e.g. the archive
+   * screen) consistent with whatever order is shown here, regardless of
+   * whether the drag that triggered this reordered groups or reordered
+   * items within one group.
+   *
+   * Only writes habits whose sortOrder actually changed (most drags move one
+   * item — rewriting all of them bumps updatedAt/version on rows nothing
+   * happened to, for no reason), and awaits every write via `Promise.all`
+   * before returning instead of firing them and moving on — a burst of
+   * unawaited writes racing the debounced auto-sync could let a push go out
+   * with only some of them applied, reported as the reordered list
+   * occasionally reverting a moment after the drop. */
+  async function persistFlatHabitOrder(groupsInOrder: Group[]) {
+    const updates: Promise<unknown>[] = [];
+    let index = 0;
+    for (const group of groupsInOrder) {
+      for (const item of group.items) {
+        if (item.habit.sortOrder !== index) updates.push(habitRepository.update(item.habit.id, { sortOrder: index }));
+        index++;
+      }
+    }
+    await Promise.all(updates);
+  }
+
+  function handleReorderGroups(newGroups: Group[]) {
+    newGroups.forEach((group, index) => {
+      if (group.key === DEFAULT_GROUP_KEY) setDefaultGroupSortOrder(index);
+      else void categoryRepository.update(group.key, { sortOrder: index });
+    });
+    void persistFlatHabitOrder(newGroups);
+  }
+
+  function handleReorderItemsInGroup(groupKey: string, newItems: TodayHabit[]) {
+    void persistFlatHabitOrder(groups.map((group) => (group.key === groupKey ? { ...group, items: newItems } : group)));
   }
 
   const viewedDateObj = new Date(viewedDate);
@@ -119,6 +174,7 @@ export default function TodayScreen() {
         ref={stripRef}
         horizontal
         showsHorizontalScrollIndicator={false}
+        onContentSizeChange={handleStripContentSizeChange}
         contentContainerStyle={styles.stripContent}
         style={styles.strip}>
         {strip.map((day) => {
@@ -166,13 +222,22 @@ export default function TodayScreen() {
           </Link>
         </View>
       ) : (
-        <ScrollView contentContainerStyle={styles.list}>
-          {groups.map((group) => {
-            const isCollapsed = collapsedGroups.has(group.key);
-            const groupCompleted = group.items.filter((item) => item.isCheckedForViewedDate).length;
-            return (
-              <View key={group.key} style={styles.groupSection}>
-                <Pressable style={styles.groupHeader} onPress={() => toggleGroupCollapsed(group.key)}>
+        <ScrollView style={styles.listScroll} contentContainerStyle={styles.list}>
+          <ReorderableList
+            data={groups}
+            keyExtractor={(group) => group.key}
+            onReorder={handleReorderGroups}
+            renderItem={(group, dragHandle) => {
+              const isCollapsed = collapsedGroups.has(group.key);
+              const groupCompleted = group.items.filter((item) => item.isCheckedForViewedDate).length;
+              // 웹은 헤더 전체가 아니라 전용 손잡이 아이콘만 드래그 영역으로 쓴다
+              // — components/reorderable-list.tsx의 DragHandle 문서 참고
+              // (react-native-gesture-handler의 웹 구현이 스크롤 가능한
+              // ScrollView 안에서 Pan+activateAfterLongPress를 지원 못 하는
+              // 알려진 미해결 이슈라, 헤더 전체를 감싸는 한 근본적으로
+              // 못 고친다). 네이티브는 기존처럼 헤더 전체 롱프레스로 동작.
+              const headerContent = (
+                <>
                   <Ionicons name={isCollapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={theme.textSecondary} />
                   <ThemedText type="smallBold" style={styles.groupTitle}>
                     {group.name}
@@ -180,15 +245,50 @@ export default function TodayScreen() {
                   <ThemedText type="small" themeColor="textSecondary">
                     {groupCompleted}/{group.items.length}
                   </ThemedText>
+                  {Platform.OS === 'web' ? (
+                    <GestureDetector gesture={dragHandle.gesture}>
+                      <View hitSlop={8} style={styles.groupDragHandle}>
+                        <Ionicons name="reorder-three" size={20} color={theme.textSecondary} />
+                      </View>
+                    </GestureDetector>
+                  ) : null}
+                </>
+              );
+              const header = (
+                <Pressable
+                  style={[styles.groupHeader, dragHandle.isDragging ? { opacity: 0.6 } : null]}
+                  onPress={() => {
+                    if (wasDragJustEnded()) return;
+                    toggleGroupCollapsed(group.key);
+                  }}>
+                  {headerContent}
                 </Pressable>
-                {isCollapsed
-                  ? null
-                  : group.items.map((item) => (
-                      <HabitCard key={item.habit.id} item={item} onToggle={() => toggleCheckIn(item.habit)} />
-                    ))}
-              </View>
-            );
-          })}
+              );
+              return (
+                <View style={styles.groupSection}>
+                  {Platform.OS === 'web' ? header : <GestureDetector gesture={dragHandle.gesture}>{header}</GestureDetector>}
+                  {isCollapsed ? null : (
+                    <ReorderableList
+                      data={group.items}
+                      keyExtractor={(item) => item.habit.id}
+                      onReorder={(newItems) => handleReorderItemsInGroup(group.key, newItems)}
+                      renderItem={(item, itemHandle) =>
+                        Platform.OS === 'web' ? (
+                          <HabitCard item={item} onToggle={() => toggleCheckIn(item.habit)} dragHandle={itemHandle} />
+                        ) : (
+                          <GestureDetector gesture={itemHandle.gesture}>
+                            <View style={itemHandle.isDragging ? styles.draggingItem : null}>
+                              <HabitCard item={item} onToggle={() => toggleCheckIn(item.habit)} />
+                            </View>
+                          </GestureDetector>
+                        )
+                      }
+                    />
+                  )}
+                </View>
+              );
+            }}
+          />
         </ScrollView>
       )}
 
@@ -215,13 +315,14 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
+    flexShrink: 0,
   },
   headerDate: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   headerDateText: { fontSize: 30, lineHeight: 34 },
   weekdayBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
   headerActions: { flexDirection: 'row', gap: 4 },
   headerIconButton: { padding: 6 },
-  strip: { marginTop: 16, flexGrow: 0 },
+  strip: { marginTop: 16, flexGrow: 0, flexShrink: 0 },
   stripContent: { paddingHorizontal: 20, gap: 8 },
   stripDay: {
     width: 52,
@@ -239,11 +340,15 @@ const styles = StyleSheet.create({
     marginTop: 20,
     marginBottom: 4,
     paddingHorizontal: 20,
+    flexShrink: 0,
   },
+  listScroll: { flex: 1 },
   list: { paddingHorizontal: 20, paddingBottom: 100 },
   groupSection: { marginTop: 16 },
   groupHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
+  draggingItem: { opacity: 0.85 },
   groupTitle: { flex: 1 },
+  groupDragHandle: { padding: 2 },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   emptySubtitle: { marginTop: 8, marginBottom: 20, textAlign: 'center' },
   cta: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 },

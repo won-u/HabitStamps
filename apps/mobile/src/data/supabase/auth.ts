@@ -25,6 +25,27 @@ function parseTokensFromRedirectUrl(url: string): { accessToken: string; refresh
   return { accessToken, refreshToken };
 }
 
+/**
+ * Web-only fallback for when the OAuth redirect lands as a normal top-level
+ * navigation instead of inside a popup `openAuthSessionAsync` can talk to —
+ * e.g. the app was opened from the iOS home-screen icon (standalone display
+ * mode), where `window.open` doesn't create a postMessage-able popup and
+ * instead just navigates the single WKWebView away and back. In that case
+ * `signInWithGoogle`'s own `setSession` call never runs (its whole call
+ * stack got replaced by the fresh page load), but the tokens are still
+ * sitting in this page's own URL — so `auth-callback.tsx` calls this on
+ * mount to pick them up directly.
+ */
+export async function completeWebRedirectSignIn(supabase: SupabaseClient): Promise<void> {
+  const tokens = parseTokensFromRedirectUrl(window.location.href);
+  if (!tokens) return;
+  const { error } = await supabase.auth.setSession({
+    access_token: tokens.accessToken,
+    refresh_token: tokens.refreshToken,
+  });
+  if (error) throw error;
+}
+
 export async function signInWithGoogle(supabase: SupabaseClient): Promise<void> {
   const redirectTo = Linking.createURL("auth-callback");
   const { data, error } = await supabase.auth.signInWithOAuth({

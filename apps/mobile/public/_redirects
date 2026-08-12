@@ -1,0 +1,3 @@
+/habit/:id/edit    /habit/[id]/edit.html   200
+/habit/:id         /habit/[id].html        200
+/*                 /+not-found.html        404
