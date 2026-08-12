@@ -86,7 +86,7 @@ export default function StatsScreen() {
       const dates = allCheckIns
         .filter((checkIn) => checkIn.habitId === habit.id && checkIn.date >= rangeStart)
         .map((checkIn) => checkIn.date);
-      const { current, longest } = calculateStreak(dates, today);
+      const { current, longest } = calculateStreak(dates, today, habit.frequencyType, habit.frequencyConfig);
       const completionRate = Math.round((dates.length / LOOKBACK_DAYS) * 100);
       return { habit, currentStreak: current, longestStreak: longest, completionRate };
     });

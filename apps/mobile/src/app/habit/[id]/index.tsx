@@ -52,10 +52,11 @@ export default function HabitDetailScreen() {
   const checkedDates = useMemo(() => new Set(checkIns.map((checkIn) => checkIn.date)), [checkIns]);
 
   const { current, longest, currentRange, longestRange } = useMemo(() => {
+    if (!habit) return { current: 0, longest: 0, currentRange: null, longestRange: null };
     const rangeStart = format(subDays(new Date(today), STREAK_LOOKBACK_DAYS), 'yyyy-MM-dd');
     const dates = [...checkedDates].filter((date) => date >= rangeStart);
-    return calculateStreak(dates, today);
-  }, [checkedDates, today]);
+    return calculateStreak(dates, today, habit.frequencyType, habit.frequencyConfig);
+  }, [checkedDates, today, habit]);
 
   const isCurrentStreakRecord = current > 0 && current === longest;
 

@@ -84,7 +84,7 @@ export function useToday() {
         .map((checkIn) => checkIn.date)
         .filter((date) => date >= rangeStart)
         .sort();
-      const { current } = calculateStreak(datesInRange, today);
+      const { current } = calculateStreak(datesInRange, today, habit.frequencyType, habit.frequencyConfig);
       const lastDate = datesInRange.length > 0 ? datesInRange[datesInRange.length - 1]! : null;
       const periodStart = isMonthlyFrequency(habit.frequencyType) ? monthStart : weekStart;
       const periodCount = datesInRange.filter((date) => date >= periodStart).length;
