@@ -69,10 +69,11 @@ export default function TodayScreen() {
     const byCategory = new Map<string, TodayHabit[]>();
     for (const item of items) {
       const categoryId = item.habit.categoryId;
-      // Categories are local-only (never part of SyncGateway), so a habit
-      // synced from another device can reference a category id this device
-      // has never heard of — fall back to the default group instead of
-      // silently dropping the habit from the list.
+      // Categories are their own sync entity (pushed/pulled independently
+      // of habits), so a habit synced from another device can arrive before
+      // its category row does, or reference one this device never pulls —
+      // fall back to the default group instead of silently dropping the
+      // habit from the list.
       const key = categoryId && knownCategoryIds.has(categoryId) ? categoryId : DEFAULT_GROUP_KEY;
       const bucket = byCategory.get(key);
       if (bucket) bucket.push(item);

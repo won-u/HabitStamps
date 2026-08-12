@@ -11,18 +11,24 @@ export interface CategoryGroup<T> {
 
 /**
  * Buckets items by categoryId, in category-list order, with a leading '기본'
- * bucket for items that have no category. Shared by the Stats screen's
- * Weekly/Monthly/Yearly report sections — the Today screen keeps its own
- * inline copy of this same pattern for now (out of scope for this change).
+ * bucket for items that have no category — or whose categoryId points at a
+ * category this device doesn't have (e.g. synced from another device before
+ * that category itself was pulled down; categories are their own sync
+ * entity, so a habit's categoryId can arrive before the category row does).
+ * Falling back instead of dropping the item keeps it visible. Shared by the
+ * Stats screen's Weekly/Monthly/Yearly report sections — the Today screen
+ * keeps its own inline copy of this same matching logic.
  */
 export function groupByCategory<T>(
   items: readonly T[],
   categories: readonly Category[],
   getCategoryId: (item: T) => string | null,
 ): CategoryGroup<T>[] {
+  const knownCategoryIds = new Set(categories.map((category) => category.id));
   const byCategory = new Map<string, T[]>();
   for (const item of items) {
-    const key = getCategoryId(item) ?? DEFAULT_GROUP_KEY;
+    const categoryId = getCategoryId(item);
+    const key = categoryId && knownCategoryIds.has(categoryId) ? categoryId : DEFAULT_GROUP_KEY;
     const bucket = byCategory.get(key);
     if (bucket) bucket.push(item);
     else byCategory.set(key, [item]);
