@@ -76,6 +76,20 @@ create policy categories_insert_own on public.categories for insert with check (
 drop policy if exists categories_update_own on public.categories;
 create policy categories_update_own on public.categories for update using (user_id = auth.uid());
 
+-- Returns Postgres's own clock so the client can use it as the next pull's
+-- watermark instead of its own (possibly skewed) clock — see the comment on
+-- `pull()` in apps/mobile/src/data/sync/supabase-sync-gateway.ts for why a
+-- client-clock watermark can permanently stop a device from receiving other
+-- devices' changes.
+create or replace function public.sync_server_time() returns timestamptz
+language sql stable security definer
+set search_path = public, pg_temp
+as $$
+  select now();
+$$;
+
+grant execute on function public.sync_server_time to authenticated;
+
 -- Batch upsert with server-side LWW: a row only overwrites the existing one
 -- if its updated_at is strictly newer (mirrors apps/backend/src/db/upsert.ts's
 -- policy — see docs/architecture.md §4-3/§5). Returns the ids that were

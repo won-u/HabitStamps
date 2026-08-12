@@ -152,11 +152,22 @@ export class SupabaseSyncGateway implements SyncGateway {
   }
 
   async pull(sinceIso: string): Promise<SyncPullResult> {
-    const [habitsResult, checkInsResult, categoriesResult] = await Promise.all([
+    // The next pull's `since` is this call's returned serverTime, so it must
+    // come from Postgres's clock (`sync_server_time()` RPC), not
+    // `new Date()` (this device's clock). If this device's clock runs ahead
+    // of real time, a client-clock watermark gets persisted into the future
+    // (`composition/container.ts`'s `runSync` stores it verbatim) — every
+    // subsequent `updated_at > since` pull query then permanently excludes
+    // rows other devices push at the real time, with no error surfaced
+    // (device clock drift causing a stuck "future" JWT `iat` has already
+    // been observed on this project's emulator, docs/architecture.md §5-4).
+    const [serverTimeResult, habitsResult, checkInsResult, categoriesResult] = await Promise.all([
+      this.client.rpc("sync_server_time"),
       this.client.from("habits").select("*").gt("updated_at", sinceIso).order("updated_at"),
       this.client.from("check_ins").select("*").gt("updated_at", sinceIso).order("updated_at"),
       this.client.from("categories").select("*").gt("updated_at", sinceIso).order("updated_at"),
     ]);
+    if (serverTimeResult.error) throw serverTimeResult.error;
     if (habitsResult.error) throw habitsResult.error;
     if (checkInsResult.error) throw checkInsResult.error;
     if (categoriesResult.error) throw categoriesResult.error;
@@ -165,7 +176,7 @@ export class SupabaseSyncGateway implements SyncGateway {
     const checkIns = toEntityChangeSet(checkInsResult.data as CheckInRow[], rowToCheckIn);
     const categories = toEntityChangeSet(categoriesResult.data as CategoryRow[], rowToCategory);
 
-    return { serverTime: new Date().toISOString(), changes: { habits, checkIns, categories } };
+    return { serverTime: serverTimeResult.data as string, changes: { habits, checkIns, categories } };
   }
 }
 
