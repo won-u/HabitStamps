@@ -140,6 +140,19 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 - **네이티브에서도 재현된 진짜 원인: 같은 항목을 연달아 두 번 드래그하면 옛 위치 기준으로 계산됨**: "1을 옮겨서 2,1,3,4가 된 직후, 1을 다시 드래그하면 이상하게 동작(1,2,3,4로 돌아가는 것처럼 보임)"으로 보고됐다. 원인: `handleStart`가 그 행의 시작 위치(`startOffsetY`)를 제스처가 마지막으로 다시 만들어졌을 때의 값으로 계속 참조하고 있었다 — 그 제스처는 `disabled` prop이 바뀔 때만(다른 행이 드래그를 시작/종료할 때) 다시 만들어지는데, 같은 행을 연달아 두 번 드래그하는 사이에 다른 행의 드래그가 끼지 않으면 이 재생성이 한 번도 안 일어나서, 두 번째 드래그가 **첫 번째 드래그가 있기 전의** 위치를 기준으로 계산됐다. `order`/`heights`와 같은 방식으로 `useSharedValue` + `useEffect`로 매 렌더 최신값을 동기화하도록 고쳤다. `adb shell input draganddrop`으로 "같은 항목 연속 두 번 드래그"를 재현·검증(짧은 duration은 롱프레스 활성화가 잘 안 돼서 재현 자체가 방해됐다 — 1.5초 이상으로 늘려야 안정적으로 재현/검증됨).
 - **아이폰 PWA에서 "여러 칸 끌어도 한 칸만 이동"하던 문제 — 드래그 중 실제 배열/DOM을 재배치하던 게 원인**: 안드로이드에서는 이미 여러 칸 연속 이동이 되는 걸 확인했는데도 아이폰 PWA(손잡이 드래그)에서는 계속 한 칸씩만 옮겨졌다. 기존 구현은 임계값을 넘을 때마다 곧바로 실제 배열을 스플라이스해 DOM 자식 순서까지 매번 바꾸고 있었는데, iOS Safari는 터치 중인 요소의 DOM이 바뀌면 그 터치를 취소하는 것으로 알려져 있어 — 첫 재배치 직후 제스처가 끝나버리는 것과 정확히 들어맞는다(이 샌드박스에서 실기기로 직접 재현하진 못했고, 실제 웹 드래그 라이브러리들의 공통 패턴에 근거해 고쳤다 — 최종 확인은 사용자 실기기 테스트 필요). `reorderable-list.tsx`를 리팩터링해 드래그 중엔 실제 배열을 건드리지 않고 목표 위치(`dragToIndex`)만 기억하며, 사이에 낀 다른 행들은 `shiftY`로 시각적으로만 비켜서게 하고, 실제 스플라이스는 손을 뗄 때 한 번만 하도록 바꿨다. 안드로이드에서 리팩터링 전후로 다시 검증해 회귀 없음을 확인. 상세는 `docs/architecture.md` §3-5 11차.
 
+## 2026-08-12 코드 리뷰 + Critical 수정: 동기화 시계 스큐, 카테고리 폴백 통계 누락
+
+전체 코드베이스(동기화/데이터 계층, UI/제스처, `packages/core` 도메인 계층, 앱 셸/설정/PWA)를 4개 영역으로 나눠 리뷰했다. 전체 결과(Critical 3 / Major 12 / Minor·Nit 17)는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고. 이 중 Critical 3건 중 2건을 이번에 수정했다(나머지 하나는 저장소 관리 문제라 코드 변경 대상이 아니었음).
+
+- **저장소 루트 `auth.md`에 평문 Google OAuth Client Secret**: git에 커밋된 적은 없었지만 `.gitignore` 대상도 아니어서 실수로 커밋될 위험이 있었다 — 사용자가 저장소 밖으로 즉시 이동해 해결.
+- **`pull()`이 서버 시각이 아니라 클라이언트 시계를 워터마크로 반환**: `SupabaseSyncGateway.pull()`이 `new Date().toISOString()`(이 기기의 로컬 시계)을 `serverTime`으로 반환하고 있었는데, 이 값이 그대로 `lastSyncedAt`에 저장돼 다음 증분 pull의 기준이 된다. 이 기기의 시계가 실제보다 앞서 있으면(에뮬레이터 시계 오차로 "JWT issued at future" 에러를 겪은 사례가 이미 위에 기록돼 있을 만큼 실제로 발생하는 조건) `lastSyncedAt`이 미래 시각으로 오염되고, 이후 다른 기기가 실제 시각 기준으로 push한 변경분은 `updated_at > lastSyncedAt` 조건을 영원히 통과하지 못해 **그 기기의 시계가 그 미래 시각을 따라잡기 전까지 다시는 내려오지 않는다** — 에러 없이 조용히, 이 앱의 핵심 가치(다중 기기 동기화)가 깨지는 경로였다.
+  - **수정**: Postgres의 `now()`를 반환하는 `sync_server_time()` RPC(`docs/supabase-schema.sql`, `security definer` + `search_path` 고정)를 추가하고, `pull()`이 이 RPC 호출 결과를 `serverTime`으로 쓰도록 변경(`apps/mobile/src/data/sync/supabase-sync-gateway.ts`).
+  - **이미 Supabase 프로젝트를 설정해둔 사용자는 `docs/supabase-schema.sql` 전체를 SQL Editor에서 다시 실행해야 한다** — `create or replace function`이라 재실행해도 안전하고, 이 함수가 없으면 다음 `pull()` 호출이 즉시 실패한다.
+- **Stats 리포트(Weekly/Monthly/Yearly)에서 로컬에 없는 카테고리를 가진 습관이 통째로 사라짐**: `features/reports/group-by-category.ts`의 `groupByCategory()`가 `categoryId`가 `null`일 때만 "기본" 그룹으로 폴백하고 있었다 — 값이 있지만 이 기기에 없는 카테고리(다른 기기에서 동기화된 카테고리)를 가리키면 어떤 그룹에도 들어가지 못했다. 이는 2026-08-11에 오늘 화면(`(tabs)/index.tsx`)에서 이미 한 번 발견·수정된 것과 정확히 같은 결함인데, 그 수정이 통계 화면이 쓰는 공용 함수에는 반영되지 않고 있었다(코드 주석에 "Today 화면은 자체 인라인 복사본을 씀, 이번 변경 범위 밖"이라 적혀 있어 알고도 전파가 안 된 상태였다).
+  - **수정**: `groupByCategory()`가 `categories` 목록에 실재하는 카테고리일 때만 그 그룹으로 보내고, 아니면(없음/모르는 카테고리) "기본"으로 폴백하도록 오늘 화면과 동일한 로직으로 통일. 오늘 화면 쪽의 관련 주석("카테고리는 로컬 전용이라…")도 이미 사실이 아니게 된 지 오래라(2026-08-11 카테고리 완전 동기화 이후) 같이 정정했다.
+
+**남은 것**: Major 12건(동기화 부분 실패 시 가짜 conflict 무한 반복, RPC 배치 전체 롤백, `check_ins` UNIQUE 제약 부재, `SECURITY DEFINER` 함수 3개 `search_path` 미고정, 스트릭 계산이 반복주기를 무시, `packages/core` 유닛 테스트 0개, 웹 빌드에서 `expo-secure-store`가 no-op이라 설정이 새로고침마다 초기화 등)와 Minor·Nit 17건은 아직 미착수 — 상세와 우선순위는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*

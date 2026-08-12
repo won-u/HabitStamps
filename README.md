@@ -8,6 +8,7 @@ iOS 앱 [DayStamps](https://apps.apple.com/) 를 레퍼런스로 만든 개인/�
 > - [ux-design.md](./docs/ux-design.md) — 실제 구현된 화면별 UI/UX
 > - [roadmap.md](./docs/roadmap.md) — **현재 진행 상황**과 다음 단계
 > - [dev-guide.md](./docs/dev-guide.md) — 안드로이드 빌드, 웹 빌드+Cloudflare Pages 배포, Supabase 운영 실무 가이드
+> - [code-review-2026-08-12.md](./docs/code-review-2026-08-12.md) — 코드 리뷰 결과(Critical/Major/Minor)와 조치 현황
 
 ## 현재 상태 요약
 
