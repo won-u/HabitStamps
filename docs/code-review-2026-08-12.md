@@ -55,10 +55,10 @@ Google OAuth Client Secret과 Supabase URL/anon key가 마크다운 파일로 �
 
 ### 동기화 / 데이터 계층
 
-- **push() 부분 실패 시 이미 성공한 행이 "가짜 conflict"로 영구 고착** (`supabase-sync-gateway.ts:124-152`, `sync-engine.ts:38-44`) — habits/checkIns/categories 세 RPC를 순차 호출하다 하나가 실패하면 즉시 throw돼, 앞서 성공한 RPC는 서버엔 반영됐지만 로컬은 `pending`으로 남는다. 다음 sync 때 같은 값을 재전송하면 서버의 `where updated_at < excluded.updated_at`(엄격한 부등호) 조건에 걸려 반영 안 됨 → 클라이언트가 conflict로 오판 → 사용자가 다시 수정하기 전까지 매 sync마다 재전송·재실패를 반복.
-- **RPC 배치 한 행의 오류가 전체 배치를 롤백** (`supabase-schema.sql`의 `sync_upsert_*` 세 함수) — 함수 본문 전체가 암묵적 트랜잭션이라, 배치 중 한 행이라도 캐스팅 실패하면 같은 배치의 정상 행까지 통째로 롤백된다.
+- **push() 부분 실패 시 이미 성공한 행이 "가짜 conflict"로 영구 고착** (`supabase-sync-gateway.ts:124-152`, `sync-engine.ts:38-44`) — ✅ **해결됨 (2026-08-13)**. habits/checkIns/categories 세 RPC를 순차 호출하다 하나가 실패하면 즉시 throw돼, 앞서 성공한 RPC는 서버엔 반영됐지만 로컬은 `pending`으로 남았다. `SyncPushResult`에 `failedIds`(해당 엔티티 타입의 RPC 자체가 실패해 LWW 평가도 못 받은 id)를 추가해 `conflicts`(서버가 실제로 거부한 id)와 구분하고, `push()`가 각 RPC 에러를 개별 catch해 더 이상 throw하지 않도록 변경 — 한 엔티티 타입이 실패해도 나머지는 정상 markSynced된다. 부수 효과로 push 부분 실패가 더 이상 pull() 실행 자체를 막지 않는다.
+- **RPC 배치 한 행의 오류가 전체 배치를 롤백** (`supabase-schema.sql`의 `sync_upsert_*` 세 함수) — ✅ **해결됨 (2026-08-13)**. 함수 본문 전체가 암묵적 트랜잭션이라, 배치 중 한 행이라도 캐스팅 실패하면 같은 배치의 정상 행까지 통째로 롤백되고 있었다. 세 함수 모두 행 단위 insert를 `begin/exception when others` 블록으로 감싸 개별 행 오류가 배치 전체를 막지 않도록 수정(디버깅용 `raise warning` 포함).
 - **`check_ins`에 (habit_id, date) UNIQUE 제약이 실제로는 없음** (`schema.ts:69-73`, `supabase-schema.sql:25-39`) — ✅ **해결됨 (2026-08-12)**. architecture.md가 스스로 명시한 원칙("`UNIQUE(habitId, date) WHERE deletedAt IS NULL`")과 실제 구현이 어긋났었다. Postgres/SQLite 양쪽에 partial unique index를 추가하고, 기존에 쌓여있을 수 있는 중복은 정리 후 인덱스를 생성하도록 마이그레이션/스키마에 포함했다. 단순 추가만 하면 두 기기가 오프라인에서 같은 날 독립 체크인 후 동기화될 때 push가 실패하며 배치 전체가 막힐 수 있어, `sync_upsert_check_ins`의 예외 처리와 로컬 `applyRemoteChanges`의 충돌 병합(노트/사진/값을 잃지 않고 서버 쪽을 정본으로 병합)도 함께 구현했다. 상세는 roadmap.md 참고.
-- **`SECURITY DEFINER` RPC 3개에 `search_path` 미고정** (`supabase-schema.sql:85, 129, 168`) — Postgres/Supabase의 잘 알려진 search_path 하이재킹 패턴, Supabase Security Advisor가 "Function Search Path Mutable"로 표시하는 항목. (참고: 이번에 추가한 `sync_server_time()`은 처음부터 `search_path`를 고정해 작성했다.)
+- **`SECURITY DEFINER` RPC 3개에 `search_path` 미고정** (`supabase-schema.sql:85, 129, 168`) — ✅ **해결됨 (2026-08-13)**. Postgres/Supabase의 잘 알려진 search_path 하이재킹 패턴, Supabase Security Advisor가 "Function Search Path Mutable"로 표시하는 항목이었다. `sync_upsert_habits`/`sync_upsert_check_ins`/`sync_upsert_categories` 세 함수 모두에 `search_path = public, pg_temp` 고정 — `sync_server_time()`에 이미 적용했던 패턴을 확장.
 
 ### 도메인 계층 (`packages/core`)
 
@@ -117,6 +117,9 @@ Google OAuth Client Secret과 Supabase URL/anon key가 마크다운 파일로 �
 2. ~~`pull()` 워터마크를 서버 시각 기준으로 교체~~ — ✅ 완료 (Supabase 프로젝트에 `supabase-schema.sql` 재실행 필요)
 3. ~~`group-by-category.ts`의 카테고리 폴백 로직 통일~~ — ✅ 완료
 4. ~~calculate-streak / period-counts에 유닛 테스트 추가 후 frequencyType 반영~~ — ✅ 완료 (2026-08-12)
-5. ~~`check_ins`에 partial unique index 추가~~ — ✅ 완료 (2026-08-12, Supabase 프로젝트에 `supabase-schema.sql` 재실행 필요). `SECURITY DEFINER` 함수 3개(`sync_upsert_habits/check_ins/categories`)의 `search_path` 고정은 아직 미착수로 남음.
-6. **동기화 부분 실패 시 가짜 conflict 방지** — push()가 실패한 RPC 이전에 성공한 것만이라도 `markSynced`되도록 각 RPC 호출을 독립적으로 처리
-7. **`SECURITY DEFINER` 함수 3개(`sync_upsert_habits/check_ins/categories`)에 `search_path` 고정** — `sync_server_time()`/새 check_ins 예외 처리 블록에는 이미 적용된 패턴을 나머지에도 확장
+5. ~~`check_ins`에 partial unique index 추가~~ — ✅ 완료 (2026-08-12, Supabase 프로젝트에 `supabase-schema.sql` 재실행 완료)
+6. ~~동기화 부분 실패 시 가짜 conflict 방지~~ — ✅ 완료 (2026-08-13)
+7. ~~RPC 배치 한 행 오류가 전체 배치를 롤백~~ — ✅ 완료 (2026-08-13)
+8. ~~`SECURITY DEFINER` 함수 3개(`sync_upsert_habits/check_ins/categories`)에 `search_path` 고정~~ — ✅ 완료 (2026-08-13, Supabase 프로젝트에 `supabase-schema.sql` 재실행 필요)
+9. **`frequencyConfig`가 `frequencyType`과 교차 검증되지 않음** — `weekdays: []` 같은 상태로 영구 체크 불가 습관이 만들어질 수 있음
+10. **여러 지점에서 DB 쓰기 실패가 조용히 삼켜짐** / **웹 빌드에서 `expo-secure-store` no-op**

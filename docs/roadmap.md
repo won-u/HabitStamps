@@ -167,6 +167,17 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 
 **남은 것**: Major 9건(동기화 부분 실패 시 가짜 conflict 방지, `SECURITY DEFINER` 함수 3개 `search_path` 고정, `frequencyConfig` 교차 검증 등)과 Minor·Nit 17건은 아직 미착수 — 상세는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
 
+## 2026-08-13 Major 수정: push 부분 실패, RPC 배치 롤백, search_path 고정
+
+코드 리뷰 Major 12건 중 이어서 #4/#5/#8을 진행했다. 전체 목록/근거는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
+
+- **push() 부분 실패 시 가짜 conflict 영구 고착 수정**: habits/checkIns/categories 세 RPC를 순차 호출하다 하나가 실패하면 `push()`가 즉시 throw해서, 앞서 성공한 RPC도 `markSynced`가 전혀 호출되지 않고 있었다. 다음 sync 때 같은 값을 재전송하면 서버의 `where updated_at < excluded.updated_at`(엄격한 부등호) 조건에 걸려 반영 안 됨 → 클라이언트가 conflict로 오판 → 사용자가 다시 수정하기 전까지 매 sync마다 재전송·재실패를 반복하는 상태였다. `SyncPushResult`에 `failedIds`(해당 엔티티 타입의 RPC 호출 자체가 실패해 LWW 평가조차 못 받은 id — 서버가 실제로 거부한 `conflicts`와는 의미가 다름)를 추가하고, `push()`가 각 RPC 에러를 개별 catch해 더 이상 throw하지 않도록 변경 — 한 엔티티 타입이 실패해도 나머지는 정상 반영·markSynced된다. 가짜 SyncGateway/Repository로 "habits 성공, checkIns 실패" 시나리오를 재현해 habit은 markSynced되고 checkIn은 pending으로 남아 재시도되는 것을 확인했다.
+- **RPC 배치 한 행의 오류가 전체 배치를 롤백하는 문제 수정**: `sync_upsert_habits`/`sync_upsert_check_ins`/`sync_upsert_categories` 세 함수 모두 본문 전체가 암묵적 트랜잭션이라, 배치 중 한 행이라도 캐스팅 실패(손상된 데이터 등)하면 같은 배치의 정상 행까지 통째로 롤백되고 있었다. 세 함수 모두 행 단위 insert를 `begin/exception when others` 블록으로 감싸 개별 행 오류가 배치 전체를 막지 않도록 수정 — 실패한 행은 디버깅용 `raise warning`을 남기고 미승인 처리된다(`sync_upsert_check_ins`는 기존에 unique_violation만 잡고 있던 것에 `others` 케이스 추가). Docker Postgres에서 정상 행 사이에 캐스팅이 깨지는 행을 끼워 그 행만 스킵되고 앞뒤 행은 정상 반영되는 것을 확인했다.
+- **`SECURITY DEFINER` 함수 3개 `search_path` 고정**: `sync_upsert_habits`/`sync_upsert_check_ins`/`sync_upsert_categories`에 `search_path = public, pg_temp`를 고정 — `sync_server_time()`에 이미 적용했던 패턴을 확장. Supabase Security Advisor의 "Function Search Path Mutable" 경고에 해당하는 항목이었다.
+- **이미 Supabase 프로젝트를 설정해둔 사용자는 `docs/supabase-schema.sql` 전체를 SQL Editor에서 다시 실행해야 한다** — `create or replace function` 위주라 재실행해도 안전하다.
+
+**남은 것**: Major 6건(`frequencyConfig` 교차 검증 부재, DB 쓰기 실패가 조용히 삼켜짐, 웹 `expo-secure-store` no-op, 정량 습관 `value` 하한 없음, 기간 카운트 미래 날짜 미필터링, 로그아웃 에러 처리 부재)과 Minor·Nit 17건은 아직 미착수 — 상세는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*
