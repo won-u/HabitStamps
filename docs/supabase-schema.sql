@@ -120,7 +120,9 @@ grant execute on function public.sync_server_time to authenticated;
 -- actually accepted; the caller treats every other requested id as a
 -- conflict (the next pull brings down the winning server version).
 create or replace function public.sync_upsert_habits(rows jsonb) returns uuid[]
-language plpgsql security definer as $$
+language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 declare
   uid uuid := auth.uid();
   accepted uuid[] := '{}';
@@ -131,26 +133,36 @@ begin
 
   for r in select * from jsonb_array_elements(rows) loop
     did := null;
-    insert into public.habits (
-      id, user_id, name, icon, color, category_id, frequency_type, frequency_config,
-      is_archived, sort_order, created_at, updated_at, version, deleted_at
-    )
-    values (
-      (r->>'id')::uuid, uid, r->>'name', r->>'icon', r->>'color',
-      nullif(r->>'categoryId', '')::uuid, r->>'frequencyType',
-      coalesce(r->'frequencyConfig', '{}'::jsonb),
-      (r->>'isArchived')::boolean, (r->>'sortOrder')::integer,
-      (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
-      (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
-    )
-    on conflict (id) do update set
-      name = excluded.name, icon = excluded.icon, color = excluded.color,
-      category_id = excluded.category_id, frequency_type = excluded.frequency_type,
-      frequency_config = excluded.frequency_config, is_archived = excluded.is_archived,
-      sort_order = excluded.sort_order, updated_at = excluded.updated_at,
-      version = excluded.version, deleted_at = excluded.deleted_at
-    where public.habits.user_id = uid and public.habits.updated_at < excluded.updated_at
-    returning id into did;
+    -- Nested block: one malformed row (bad cast, corrupt frequency_config,
+    -- etc.) must not abort every other row already queued in this batch —
+    -- see docs/code-review-2026-08-12.md Major #5. The row is simply left
+    -- unaccepted (the client treats it as a conflict and keeps retrying it
+    -- until its data is fixed); everything else in the batch still commits.
+    begin
+      insert into public.habits (
+        id, user_id, name, icon, color, category_id, frequency_type, frequency_config,
+        is_archived, sort_order, created_at, updated_at, version, deleted_at
+      )
+      values (
+        (r->>'id')::uuid, uid, r->>'name', r->>'icon', r->>'color',
+        nullif(r->>'categoryId', '')::uuid, r->>'frequencyType',
+        coalesce(r->'frequencyConfig', '{}'::jsonb),
+        (r->>'isArchived')::boolean, (r->>'sortOrder')::integer,
+        (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
+        (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
+      )
+      on conflict (id) do update set
+        name = excluded.name, icon = excluded.icon, color = excluded.color,
+        category_id = excluded.category_id, frequency_type = excluded.frequency_type,
+        frequency_config = excluded.frequency_config, is_archived = excluded.is_archived,
+        sort_order = excluded.sort_order, updated_at = excluded.updated_at,
+        version = excluded.version, deleted_at = excluded.deleted_at
+      where public.habits.user_id = uid and public.habits.updated_at < excluded.updated_at
+      returning id into did;
+    exception when others then
+      raise warning 'sync_upsert_habits: skipping row % (%): %', r->>'id', sqlstate, sqlerrm;
+      did := null;
+    end;
 
     if did is not null then
       accepted := array_append(accepted, did);
@@ -164,7 +176,9 @@ $$;
 grant select, insert, update on public.habits, public.check_ins, public.categories to authenticated;
 
 create or replace function public.sync_upsert_check_ins(rows jsonb) returns uuid[]
-language plpgsql security definer as $$
+language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 declare
   uid uuid := auth.uid();
   accepted uuid[] := '{}';
@@ -181,6 +195,9 @@ begin
     -- one row as an ordinary conflict (the pushing device's next pull will
     -- reconcile it, see apps/mobile/.../check-in-repository.ts's
     -- applyRemoteChanges) instead of aborting every other row in this batch.
+    -- `others` is caught too for the same reason as sync_upsert_habits
+    -- (docs/code-review-2026-08-12.md Major #5) — any other malformed row
+    -- (bad cast, etc.) shouldn't abort the rest of the batch either.
     begin
       insert into public.check_ins (
         id, user_id, habit_id, date, completed_at, note, photo_uri, value,
@@ -199,8 +216,12 @@ begin
         updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at
       where public.check_ins.user_id = uid and public.check_ins.updated_at < excluded.updated_at
       returning id into did;
-    exception when unique_violation then
-      did := null;
+    exception
+      when unique_violation then
+        did := null;
+      when others then
+        raise warning 'sync_upsert_check_ins: skipping row % (%): %', r->>'id', sqlstate, sqlerrm;
+        did := null;
     end;
 
     if did is not null then
@@ -213,7 +234,9 @@ end;
 $$;
 
 create or replace function public.sync_upsert_categories(rows jsonb) returns uuid[]
-language plpgsql security definer as $$
+language plpgsql security definer
+set search_path = public, pg_temp
+as $$
 declare
   uid uuid := auth.uid();
   accepted uuid[] := '{}';
@@ -224,19 +247,26 @@ begin
 
   for r in select * from jsonb_array_elements(rows) loop
     did := null;
-    insert into public.categories (
-      id, user_id, name, color, sort_order, created_at, updated_at, version, deleted_at
-    )
-    values (
-      (r->>'id')::uuid, uid, r->>'name', r->>'color', (r->>'sortOrder')::integer,
-      (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
-      (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
-    )
-    on conflict (id) do update set
-      name = excluded.name, color = excluded.color, sort_order = excluded.sort_order,
-      updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at
-    where public.categories.user_id = uid and public.categories.updated_at < excluded.updated_at
-    returning id into did;
+    -- Same per-row isolation as sync_upsert_habits/sync_upsert_check_ins —
+    -- see docs/code-review-2026-08-12.md Major #5.
+    begin
+      insert into public.categories (
+        id, user_id, name, color, sort_order, created_at, updated_at, version, deleted_at
+      )
+      values (
+        (r->>'id')::uuid, uid, r->>'name', r->>'color', (r->>'sortOrder')::integer,
+        (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
+        (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
+      )
+      on conflict (id) do update set
+        name = excluded.name, color = excluded.color, sort_order = excluded.sort_order,
+        updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at
+      where public.categories.user_id = uid and public.categories.updated_at < excluded.updated_at
+      returning id into did;
+    exception when others then
+      raise warning 'sync_upsert_categories: skipping row % (%): %', r->>'id', sqlstate, sqlerrm;
+      did := null;
+    end;
 
     if did is not null then
       accepted := array_append(accepted, did);
