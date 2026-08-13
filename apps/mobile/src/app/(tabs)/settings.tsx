@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { Session } from '@supabase/supabase-js';
@@ -19,6 +20,7 @@ const SCHEME_OPTIONS: { value: ColorSchemePreference; label: string }[] = [
 
 export default function SettingsScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { colorSchemePreference, setColorSchemePreference, lastSyncedAt, setLastSyncedAt } = useSettingsStore();
   const [session, setSession] = useState<Session | null>(null);
   const [signingIn, setSigningIn] = useState(false);
@@ -57,7 +59,7 @@ export default function SettingsScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 20 }]}>
         <ThemedText type="title">설정</ThemedText>
 
         <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>

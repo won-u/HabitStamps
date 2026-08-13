@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import {
   addMonths,
@@ -47,6 +48,7 @@ interface HabitStat {
 
 export default function StatsScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<StatsMode>('summary');
   const [habits, setHabits] = useState<readonly Habit[]>([]);
   const [categories, setCategories] = useState<readonly Category[]>([]);
@@ -153,7 +155,7 @@ export default function StatsScreen() {
   }
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 20 }]}>
       <ThemedText type="title">통계</ThemedText>
 
       <View style={styles.segmentRow}>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Link } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { format, subDays } from 'date-fns';
@@ -28,6 +29,7 @@ interface Group {
 
 export default function TodayScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { today, viewedDate, setViewedDate, items, toggleCheckIn } = useToday();
   const [categories, setCategories] = useState<readonly Category[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -146,7 +148,7 @@ export default function TodayScreen() {
   const completedCount = items.filter((item) => item.isCheckedForViewedDate).length;
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 20 }]}>
       <View style={styles.headerRow}>
         <Pressable style={styles.headerDate} onPress={() => setDatePickerVisible(true)} hitSlop={8}>
           <ThemedText type="title" style={styles.headerDateText}>
@@ -310,7 +312,7 @@ export default function TodayScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, paddingTop: 20 },
+  container: { flex: 1 },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

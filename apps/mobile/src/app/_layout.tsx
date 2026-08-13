@@ -3,6 +3,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { AppState, type AppStateStatus, StyleSheet, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useFonts } from 'expo-font';
 import {
   NotoSansKR_400Regular,
@@ -56,9 +57,11 @@ export default function RootLayout() {
   if (error) {
     return (
       <GestureHandlerRootView style={styles.flex}>
-        <View style={styles.center}>
-          <ThemedText>DB 초기화 오류: {error}</ThemedText>
-        </View>
+        <SafeAreaProvider>
+          <View style={styles.center}>
+            <ThemedText>DB 초기화 오류: {error}</ThemedText>
+          </View>
+        </SafeAreaProvider>
       </GestureHandlerRootView>
     );
   }
@@ -69,18 +72,20 @@ export default function RootLayout() {
 
   return (
     <GestureHandlerRootView style={styles.flex}>
-      <Stack
-        screenOptions={{
-          headerStyle: { backgroundColor: theme.background },
-          headerTintColor: theme.text,
-          headerShadowVisible: false,
-          contentStyle: { backgroundColor: theme.background },
-        }}>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="habit/new" options={{ presentation: 'modal', title: '습관 추가' }} />
-        <Stack.Screen name="habit/[id]/index" options={{ title: '습관' }} />
-        <Stack.Screen name="habit/[id]/edit" options={{ presentation: 'modal', title: '습관 수정' }} />
-      </Stack>
+      <SafeAreaProvider>
+        <Stack
+          screenOptions={{
+            headerStyle: { backgroundColor: theme.background },
+            headerTintColor: theme.text,
+            headerShadowVisible: false,
+            contentStyle: { backgroundColor: theme.background },
+          }}>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="habit/new" options={{ presentation: 'modal', title: '습관 추가' }} />
+          <Stack.Screen name="habit/[id]/index" options={{ title: '습관' }} />
+          <Stack.Screen name="habit/[id]/edit" options={{ presentation: 'modal', title: '습관 수정' }} />
+        </Stack>
+      </SafeAreaProvider>
     </GestureHandlerRootView>
   );
 }

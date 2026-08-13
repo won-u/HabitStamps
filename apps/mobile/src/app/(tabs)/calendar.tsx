@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { addMonths, eachDayOfInterval, endOfMonth, format, getDay, isSameMonth, startOfMonth, subMonths } from 'date-fns';
 import { Ionicons } from '@expo/vector-icons';
 import type { CheckIn, Habit } from '@habit-tracker/core';
@@ -17,6 +18,7 @@ const CONTAINER_PADDING = 20;
 
 export default function CalendarScreen() {
   const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const { width: windowWidth } = useWindowDimensions();
   const [month, setMonth] = useState(new Date());
   const [habits, setHabits] = useState<readonly Habit[]>([]);
@@ -73,7 +75,7 @@ export default function CalendarScreen() {
   const isCurrentMonth = isSameMonth(month, new Date());
 
   return (
-    <ThemedView style={styles.container}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + CONTAINER_PADDING }]}>
       <View style={styles.monthHeader}>
         <Pressable onPress={() => setMonth((m) => subMonths(m, 1))} hitSlop={8}>
           <Ionicons name="chevron-back" size={22} color={theme.text} />
