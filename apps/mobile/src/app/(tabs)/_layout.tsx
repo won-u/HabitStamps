@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { Platform } from 'react-native';
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -5,21 +7,48 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/hooks/use-theme';
 
 const TAB_BAR_ICON_HEIGHT = 49;
-// No real device's home indicator area exceeds ~34pt — this is a generous
-// upper bound. It exists because some iOS PWA/standalone WebKit contexts
-// have been observed reporting a larger `env(safe-area-inset-bottom)` than
-// the device's actual home indicator height (confirmed: with the correct
-// 34px value, our tab bar renders pixel-perfect, no extra gap — verified via
-// Chrome DevTools Protocol's safe-area-inset override). Passing an explicit
-// height/paddingBottom here bypasses expo-router's own
-// insets.bottom-based calculation entirely, so a misreported value can't
-// inflate the visible bar.
+// Standard iOS home indicator reservation — no real device's is taller.
+const IOS_HOME_INDICATOR_INSET = 34;
+// Generous upper bound for the *native* platform's own insets.bottom
+// (should never legitimately exceed IOS_HOME_INDICATOR_INSET, kept as a
+// defensive cap regardless).
 const MAX_BOTTOM_INSET = 40;
+
+/**
+ * On web, `useSafeAreaInsets()` reads `env(safe-area-inset-bottom)`, which
+ * empirically has been observed to differ between an installed standalone
+ * PWA and the same page open in a regular Safari tab on iOS — in a plain
+ * Safari tab this device reports ~0 (Safari's own chrome occupies that
+ * space) while the installed PWA reports something clearly larger than the
+ * real 34pt home indicator (confirmed: a real device screenshot measured a
+ * gap far bigger than 34pt even after clamping insets.bottom to 40px here,
+ * meaning the *reported* value itself — not just an unclamped one — is the
+ * problem specifically in standalone mode). Since the app only ever ships
+ * as a standalone PWA on web (docs/architecture.md §3-5) and never as a
+ * bare browser tab in practice, hardcoding the platform-standard value for
+ * web sidesteps that unreliable measurement entirely rather than trusting
+ * whatever the browser reports.
+ */
+function useStandaloneDisplayMode(): boolean {
+  const [standalone, setStandalone] = useState(false);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const nav = window.navigator as Navigator & { standalone?: boolean };
+    setStandalone(window.matchMedia?.('(display-mode: standalone)').matches === true || nav.standalone === true);
+  }, []);
+  return standalone;
+}
 
 export default function TabsLayout() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
-  const bottomInset = Math.min(insets.bottom, MAX_BOTTOM_INSET);
+  const isStandaloneWeb = useStandaloneDisplayMode();
+  const bottomInset =
+    Platform.OS === 'web'
+      ? isStandaloneWeb
+        ? IOS_HOME_INDICATOR_INSET
+        : 0
+      : Math.min(insets.bottom, MAX_BOTTOM_INSET);
 
   return (
     <Tabs
