@@ -71,7 +71,7 @@ Google OAuth Client Secret과 Supabase URL/anon key가 마크다운 파일로 �
 ### UI / 앱 셸
 
 - **여러 지점에서 DB 쓰기 실패가 조용히 삼켜짐** (`habit-card.tsx:37-41`, `(tabs)/index.tsx:132-142`, `habit-form.tsx:70-94`) — 체크인 토글, 재정렬 저장, 그룹 생성, 습관 저장 모두 실패 시 사용자 피드백이 없다.
-- **웹 빌드에서 `expo-secure-store`가 사실상 no-op** (`state/settings-store.ts:5-13`) — 웹 구현이 `export default {}`라, `colorSchemePreference`/`lastSyncedAt`/`defaultGroupSortOrder`가 새로고침마다 초기화된다. 특히 `lastSyncedAt`이 매번 null이 되면 페이지를 열 때마다 전체 재동기화가 일어난다. Supabase 세션은 같은 이유로 이미 AsyncStorage로 옮겨뒀으면서 이 스토어만 놓친 것으로 보인다.
+- **웹 빌드에서 `expo-secure-store`가 사실상 no-op** (`state/settings-store.ts:5-13`) — ✅ **해결됨 (2026-08-13)**. 웹 구현이 `export default {}`라, `colorSchemePreference`/`lastSyncedAt`/`defaultGroupSortOrder`가 새로고침마다 초기화되고 있었다. Supabase 세션과 같은 이유로 `@react-native-async-storage/async-storage`로 교체(이 스토어의 필드는 전부 비밀값이 아니라 SecureStore가 애초에 불필요했음) — 이제 `expo-secure-store`는 코드베이스 어디에서도 안 쓰여서 의존성/app.json plugin에서 완전히 제거. Playwright로 웹에서 새로고침 후에도 설정이 유지되는 것을 확인.
 - **로그아웃 흐름에 에러 처리·로딩 상태 부재** (`(tabs)/settings.tsx:54-56`) — `handleGoogleSignIn`과 비대칭. 실패 시 조용히 로그인 상태로 착각할 수 있고 중복 클릭 방지도 없다.
 
 ---
@@ -121,5 +121,6 @@ Google OAuth Client Secret과 Supabase URL/anon key가 마크다운 파일로 �
 6. ~~동기화 부분 실패 시 가짜 conflict 방지~~ — ✅ 완료 (2026-08-13)
 7. ~~RPC 배치 한 행 오류가 전체 배치를 롤백~~ — ✅ 완료 (2026-08-13)
 8. ~~`SECURITY DEFINER` 함수 3개(`sync_upsert_habits/check_ins/categories`)에 `search_path` 고정~~ — ✅ 완료 (2026-08-13, Supabase 프로젝트에 `supabase-schema.sql` 재실행 필요)
-9. **`frequencyConfig`가 `frequencyType`과 교차 검증되지 않음** — `weekdays: []` 같은 상태로 영구 체크 불가 습관이 만들어질 수 있음
-10. **여러 지점에서 DB 쓰기 실패가 조용히 삼켜짐** / **웹 빌드에서 `expo-secure-store` no-op**
+9. ~~웹 빌드에서 `expo-secure-store` no-op~~ — ✅ 완료 (2026-08-13, AsyncStorage로 교체)
+10. **`frequencyConfig`가 `frequencyType`과 교차 검증되지 않음** — `weekdays: []` 같은 상태로 영구 체크 불가 습관이 만들어질 수 있음
+11. **여러 지점에서 DB 쓰기 실패가 조용히 삼켜짐**

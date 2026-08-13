@@ -178,6 +178,19 @@ emulator-5556에서 Google 로그인 후 "마지막 동기화" 시각은 갱신�
 
 **남은 것**: Major 6건(`frequencyConfig` 교차 검증 부재, DB 쓰기 실패가 조용히 삼켜짐, 웹 `expo-secure-store` no-op, 정량 습관 `value` 하한 없음, 기간 카운트 미래 날짜 미필터링, 로그아웃 에러 처리 부재)과 Minor·Nit 17건은 아직 미착수 — 상세는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
 
+## 2026-08-13 Major 수정: 웹 설정 저장소를 AsyncStorage로 교체
+
+코드 리뷰 Major 12건 중 이어서 진행. 전체 목록/근거는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
+
+`state/settings-store.ts`(zustand persist)가 `expo-secure-store`를 스토리지로 쓰고 있었는데, 이 패키지의 웹 구현은 `export default {}`(사실상 no-op)라 `colorSchemePreference`/`lastSyncedAt`/`defaultGroupSortOrder`가 웹에서 새로고침마다 초기화되고 있었다. 특히 `lastSyncedAt`이 매번 null이 되면 페이지를 열 때마다 증분 pull 대신 전체 재동기화가 일어난다 — 이 앱은 PWA를 정식 배포 타깃으로 삼고 있어(웹 빌드가 이미 Cloudflare Pages에 배포됨) 실사용에 바로 영향을 주는 항목이었다.
+
+- 이 스토어의 필드는 전부 비밀값이 아니라 애초에 SecureStore가 필요하지 않았다 — Supabase 세션이 같은 이유(SecureStore는 웹에서 no-op일 뿐 아니라 네이티브에서도 세션 토큰 크기 제한이 있어)로 이미 쓰고 있는 `@react-native-async-storage/async-storage`로 교체. AsyncStorage는 zustand의 `StateStorage` 인터페이스와 시그니처가 그대로 맞아 커스텀 래퍼 없이 바로 넘길 수 있었다.
+- `expo-secure-store`가 코드베이스 어디에서도 더 이상 안 쓰여서 의존성과 `app.json`의 plugin 항목에서 완전히 제거.
+- **네이티브 기존 사용자는 앱 업데이트 후 첫 실행 시 설정이 기본값(시스템 테마/기본 그룹 정렬/`lastSyncedAt=null`)으로 한 번 리셋된다** — 데이터 손실은 아니고(다음 자동 동기화가 정상적으로 다시 채움), 인지하고 받아들이는 트레이드오프다.
+- **검증**: Playwright로 실제 웹 빌드(`expo export -p web` → 로컬 서빙)에서 다크 테마 선택 → 새로고침 후에도 `localStorage`에 남아있는 것을 확인(수정 전이었다면 매번 system으로 리셋됐을 상황). 안드로이드 에뮬레이터에서도 `app.json` plugin 변경 때문에 `expo prebuild`로 네이티브 프로젝트를 재생성해 빌드·설치·실행 — 크래시 없음, 다크/라이트/시스템 테마 전환 정상 동작, 실제 자동 동기화도 정상 완료되는 것까지 확인했다.
+
+**남은 것**: Major 5건(`frequencyConfig` 교차 검증 부재, DB 쓰기 실패가 조용히 삼켜짐, 정량 습관 `value` 하한 없음, 기간 카운트 미래 날짜 미필터링, 로그아웃 에러 처리 부재)과 Minor·Nit 17건은 아직 미착수 — 상세는 [code-review-2026-08-12.md](./code-review-2026-08-12.md) 참고.
+
 ## 구현 단계
 
 1. ✅ **프로젝트 스캐폴딩**: pnpm workspace 초기화, `packages/core`(모델/인터페이스 정의), `apps/mobile`(Expo + expo-router 초기화). *(당시 함께 만든 `apps/backend`/`docker-compose.yml`은 2026-08-11에 제거 — architecture.md §4)*
