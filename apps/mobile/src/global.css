@@ -7,19 +7,3 @@
   --font-rounded: 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', Meiryo, 'MS PGothic', sans-serif;
   --font-serif: Georgia, 'Times New Roman', serif;
 }
-
-/* Expo's own injected reset sizes #root via `height:100%`, which resolves
-   against html/body's own `height:100%` (ultimately the initial containing
-   block / layout viewport). On this app's iOS standalone-PWA target, that
-   calculation has been observed to under-report the real visible screen
-   height — the app renders correctly-proportioned but anchored to the top,
-   leaving genuine unfilled background below everything (tab bar included,
-   confirmed by two independent tab-bar-internal-padding fixes having zero
-   effect on the reported gap). `position: fixed` with all insets at 0 sizes
-   an element against the actual visual viewport instead of the layout
-   viewport, which is the standard fix for this class of mobile-browser
-   viewport-height mismatch. */
-#root {
-  position: fixed;
-  inset: 0;
-}
