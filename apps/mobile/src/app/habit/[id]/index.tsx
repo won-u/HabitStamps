@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Link, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  addMonths,
   eachDayOfInterval,
   endOfMonth,
   endOfWeek,
@@ -12,7 +11,6 @@ import {
   startOfMonth,
   startOfWeek,
   subDays,
-  subMonths,
 } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import type { CheckIn, Habit, StreakRange } from '@habit-tracker/core';
@@ -21,11 +19,15 @@ import { calculateStreak, getPeriodCounts } from '@habit-tracker/core';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
-import { useSwipeNavigation } from '@/hooks/use-swipe-navigation';
+import { useMonthSlideCarousel } from '@/hooks/use-month-slide-carousel';
+import { MonthSlideTrack } from '@/components/month-slide-track';
 import { habitRepository, checkInRepository } from '@/composition/container';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const STREAK_LOOKBACK_DAYS = 400;
+const SCREEN_PADDING = 20;
+const CARD_HORIZONTAL_PADDING = 16;
+const MAX_WEEK_ROWS = 6;
 
 // Dates here are always 'yyyy-MM-dd' strings, so a plain character swap
 // avoids re-parsing them through Date (and the TZ bugs that invites).
@@ -37,6 +39,7 @@ function formatRange(range: StreakRange): string {
 export default function HabitDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const theme = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
   const [habit, setHabit] = useState<Habit | null>(null);
   const [checkIns, setCheckIns] = useState<readonly CheckIn[]>([]);
   const [month, setMonth] = useState(new Date());
@@ -69,10 +72,10 @@ export default function HabitDetailScreen() {
   // STREAK_LOOKBACK_DAYS — it counts every check-in this habit has ever had.
   const periodCounts = useMemo(() => getPeriodCounts([...checkedDates], today), [checkedDates, today]);
 
-  const swipeHandlers = useSwipeNavigation(
-    () => setMonth((m) => addMonths(m, 1)),
-    () => setMonth((m) => subMonths(m, 1)),
-  );
+  const containerWidth = windowWidth - SCREEN_PADDING * 2 - CARD_HORIZONTAL_PADDING * 2;
+  const cellSize = containerWidth / 7;
+  const { prevMonth, nextMonth, viewportHeight, panGesture, carouselTrackStyle, goToMonth, resetToMonth } =
+    useMonthSlideCarousel({ month, setMonth, containerWidth, rowHeight: cellSize, maxRows: MAX_WEEK_ROWS });
   const isCurrentMonth = isSameMonth(month, new Date());
 
   /**
@@ -110,25 +113,42 @@ export default function HabitDetailScreen() {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
           <View style={styles.monthHeader}>
-            <Pressable onPress={() => setMonth((m) => subMonths(m, 1))} hitSlop={8}>
+            <Pressable onPress={() => goToMonth(-1)} hitSlop={8}>
               <Ionicons name="chevron-back" size={20} color={theme.text} />
             </Pressable>
             <ThemedText type="smallBold">{format(month, 'yyyy년 M월', { locale: ko })}</ThemedText>
-            <Pressable onPress={() => setMonth((m) => addMonths(m, 1))} hitSlop={8}>
+            <Pressable onPress={() => goToMonth(1)} hitSlop={8}>
               <Ionicons name="chevron-forward" size={20} color={theme.text} />
             </Pressable>
           </View>
 
-          <View {...swipeHandlers}>
-            <MonthGrid
-              month={month}
-              checkedDates={checkedDates}
-              color={habit.color}
-              todayStr={today}
-              selectedDate={selectedDate}
-              onDayPress={handleDayPress}
-            />
+          <View style={styles.weekRow}>
+            {WEEKDAY_LABELS.map((label, index) => (
+              <View key={label} style={styles.dayCell}>
+                <ThemedText type="small" style={index === 0 ? { color: '#E85D75' } : { color: theme.textSecondary }}>
+                  {label}
+                </ThemedText>
+              </View>
+            ))}
           </View>
+
+          <MonthSlideTrack
+            panes={[prevMonth, month, nextMonth]}
+            containerWidth={containerWidth}
+            viewportHeight={viewportHeight}
+            panGesture={panGesture}
+            trackStyle={carouselTrackStyle}
+            renderMonth={(paneMonth) => (
+              <MonthGrid
+                month={paneMonth}
+                checkedDates={checkedDates}
+                color={habit.color}
+                todayStr={today}
+                selectedDate={selectedDate}
+                onDayPress={handleDayPress}
+              />
+            )}
+          />
 
           <ThemedText themeColor="textSecondary" style={styles.monthCount}>
             이번 달 {monthlyCheckedCount}회 체크인
@@ -203,7 +223,7 @@ export default function HabitDetailScreen() {
         <Pressable
           style={[styles.todayFab, { backgroundColor: theme.text }]}
           onPress={() => {
-            setMonth(new Date());
+            resetToMonth(new Date());
             setSelectedDate(null);
           }}>
           <Ionicons name="today-outline" size={22} color={theme.background} />
@@ -236,16 +256,6 @@ function MonthGrid({ month, checkedDates, color, todayStr, selectedDate, onDayPr
 
   return (
     <View>
-      <View style={styles.weekRow}>
-        {WEEKDAY_LABELS.map((label, index) => (
-          <View key={label} style={styles.dayCell}>
-            <ThemedText type="small" style={index === 0 ? { color: '#E85D75' } : { color: theme.textSecondary }}>
-              {label}
-            </ThemedText>
-          </View>
-        ))}
-      </View>
-
       {weeks.map((week, weekIndex) => (
         <View key={weekIndex} style={styles.weekRow}>
           {week.map((day, dayIndex) => {
@@ -301,8 +311,8 @@ function MonthGrid({ month, checkedDates, color, todayStr, selectedDate, onDayPr
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scroll: { padding: 20, gap: 16 },
-  card: { borderRadius: 20, padding: 16 },
+  scroll: { padding: SCREEN_PADDING, gap: 16 },
+  card: { borderRadius: 20, padding: CARD_HORIZONTAL_PADDING },
   monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   monthCount: { textAlign: 'center', marginTop: 8 },
   weekRow: { flexDirection: 'row' },

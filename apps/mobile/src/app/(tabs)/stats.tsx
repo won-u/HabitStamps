@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
 import {
   addMonths,
   addWeeks,
@@ -29,7 +31,7 @@ import { calculateStreak, getPeriodCounts } from '@habit-tracker/core';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
-import { useSwipeNavigation } from '@/hooks/use-swipe-navigation';
+import { useSlideTransition } from '@/hooks/use-slide-transition';
 import { habitRepository, checkInRepository, categoryRepository } from '@/composition/container';
 import { groupByCategory } from '@/features/reports/group-by-category';
 
@@ -110,15 +112,15 @@ export default function StatsScreen() {
     return result;
   }, [yearAnchor]);
 
-  const weekSwipe = useSwipeNavigation(
+  const weekTransition = useSlideTransition(
     () => setWeekAnchor((d) => addWeeks(d, 1)),
     () => setWeekAnchor((d) => subWeeks(d, 1)),
   );
-  const monthSwipe = useSwipeNavigation(
+  const monthTransition = useSlideTransition(
     () => setMonthAnchor((d) => addMonths(d, 1)),
     () => setMonthAnchor((d) => subMonths(d, 1)),
   );
-  const yearSwipe = useSwipeNavigation(
+  const yearTransition = useSlideTransition(
     () => setYearAnchor((d) => addYears(d, 1)),
     () => setYearAnchor((d) => subYears(d, 1)),
   );
@@ -171,33 +173,33 @@ export default function StatsScreen() {
 
       {mode === 'weekly' ? (
         <View style={styles.rangeHeader}>
-          <Pressable onPress={() => setWeekAnchor((d) => subWeeks(d, 1))} hitSlop={8}>
+          <Pressable onPress={() => weekTransition.slide(-1)} hitSlop={8}>
             <Ionicons name="chevron-back" size={20} color={theme.text} />
           </Pressable>
           <ThemedText type="smallBold">
             {format(weekDays[0]!, 'M월 d일', { locale: ko })} - {format(weekDays[6]!, 'M월 d일', { locale: ko })}
           </ThemedText>
-          <Pressable onPress={() => setWeekAnchor((d) => addWeeks(d, 1))} hitSlop={8}>
+          <Pressable onPress={() => weekTransition.slide(1)} hitSlop={8}>
             <Ionicons name="chevron-forward" size={20} color={theme.text} />
           </Pressable>
         </View>
       ) : mode === 'monthly' ? (
         <View style={styles.rangeHeader}>
-          <Pressable onPress={() => setMonthAnchor((d) => subMonths(d, 1))} hitSlop={8}>
+          <Pressable onPress={() => monthTransition.slide(-1)} hitSlop={8}>
             <Ionicons name="chevron-back" size={20} color={theme.text} />
           </Pressable>
           <ThemedText type="smallBold">{format(monthAnchor, 'yyyy년 M월', { locale: ko })}</ThemedText>
-          <Pressable onPress={() => setMonthAnchor((d) => addMonths(d, 1))} hitSlop={8}>
+          <Pressable onPress={() => monthTransition.slide(1)} hitSlop={8}>
             <Ionicons name="chevron-forward" size={20} color={theme.text} />
           </Pressable>
         </View>
       ) : mode === 'yearly' ? (
         <View style={styles.rangeHeader}>
-          <Pressable onPress={() => setYearAnchor((d) => subYears(d, 1))} hitSlop={8}>
+          <Pressable onPress={() => yearTransition.slide(-1)} hitSlop={8}>
             <Ionicons name="chevron-back" size={20} color={theme.text} />
           </Pressable>
           <ThemedText type="smallBold">{format(yearAnchor, 'yyyy년', { locale: ko })}</ThemedText>
-          <Pressable onPress={() => setYearAnchor((d) => addYears(d, 1))} hitSlop={8}>
+          <Pressable onPress={() => yearTransition.slide(1)} hitSlop={8}>
             <Ionicons name="chevron-forward" size={20} color={theme.text} />
           </Pressable>
         </View>
@@ -255,94 +257,100 @@ export default function StatsScreen() {
           {groups.length === 0 ? (
             <ThemedText themeColor="textSecondary">습관을 만들면 리포트가 여기 표시돼요</ThemedText>
           ) : mode === 'weekly' ? (
-            <View {...weekSwipe}>
-              {groups.map((group) => (
-                <View key={group.key} style={styles.groupSection}>
-                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupTitle}>
-                    {group.name}
-                  </ThemedText>
-                  <View style={[styles.tableCard, { backgroundColor: theme.backgroundElement }]}>
-                    <View style={styles.weekRow}>
-                      <View style={styles.habitNameCol} />
-                      {WEEKDAY_LABELS.map((label) => (
-                        <View key={label} style={styles.dayCol}>
-                          <ThemedText type="small" themeColor="textSecondary">
-                            {label}
-                          </ThemedText>
-                        </View>
-                      ))}
-                    </View>
-                    {group.items.map((habit) => {
-                      const dates = checkedByHabit.get(habit.id) ?? new Set<string>();
-                      return (
-                        <View key={habit.id} style={styles.weekRow}>
-                          <View style={styles.habitNameCol}>
-                            <ThemedText numberOfLines={1} type="small">
-                              {habit.icon} {habit.name}
+            <GestureDetector gesture={weekTransition.panGesture}>
+              <Animated.View style={weekTransition.animatedStyle}>
+                {groups.map((group) => (
+                  <View key={group.key} style={styles.groupSection}>
+                    <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupTitle}>
+                      {group.name}
+                    </ThemedText>
+                    <View style={[styles.tableCard, { backgroundColor: theme.backgroundElement }]}>
+                      <View style={styles.weekRow}>
+                        <View style={styles.habitNameCol} />
+                        {WEEKDAY_LABELS.map((label) => (
+                          <View key={label} style={styles.dayCol}>
+                            <ThemedText type="small" themeColor="textSecondary">
+                              {label}
                             </ThemedText>
                           </View>
-                          {weekDays.map((day) => {
-                            const dateStr = format(day, 'yyyy-MM-dd');
-                            const checked = dates.has(dateStr);
-                            return (
-                              <View key={dateStr} style={styles.dayCol}>
-                                <View
-                                  style={[
-                                    styles.weeklyDot,
-                                    { backgroundColor: checked ? habit.color : theme.backgroundSelected },
-                                  ]}
-                                />
-                              </View>
-                            );
-                          })}
-                        </View>
-                      );
-                    })}
+                        ))}
+                      </View>
+                      {group.items.map((habit) => {
+                        const dates = checkedByHabit.get(habit.id) ?? new Set<string>();
+                        return (
+                          <View key={habit.id} style={styles.weekRow}>
+                            <View style={styles.habitNameCol}>
+                              <ThemedText numberOfLines={1} type="small">
+                                {habit.icon} {habit.name}
+                              </ThemedText>
+                            </View>
+                            {weekDays.map((day) => {
+                              const dateStr = format(day, 'yyyy-MM-dd');
+                              const checked = dates.has(dateStr);
+                              return (
+                                <View key={dateStr} style={styles.dayCol}>
+                                  <View
+                                    style={[
+                                      styles.weeklyDot,
+                                      { backgroundColor: checked ? habit.color : theme.backgroundSelected },
+                                    ]}
+                                  />
+                                </View>
+                              );
+                            })}
+                          </View>
+                        );
+                      })}
+                    </View>
                   </View>
-                </View>
-              ))}
-            </View>
+                ))}
+              </Animated.View>
+            </GestureDetector>
           ) : mode === 'monthly' ? (
-            <View {...monthSwipe}>
-              {groups.map((group) => (
-                <View key={group.key} style={styles.groupSection}>
-                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupTitle}>
-                    {group.name}
-                  </ThemedText>
-                  <View style={styles.mosaicGrid}>
+            <GestureDetector gesture={monthTransition.panGesture}>
+              <Animated.View style={monthTransition.animatedStyle}>
+                {groups.map((group) => (
+                  <View key={group.key} style={styles.groupSection}>
+                    <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupTitle}>
+                      {group.name}
+                    </ThemedText>
+                    <View style={styles.mosaicGrid}>
+                      {group.items.map((habit) => (
+                        <MiniMonthCard
+                          key={habit.id}
+                          habit={habit}
+                          month={monthAnchor}
+                          checkedDates={checkedByHabit.get(habit.id) ?? new Set<string>()}
+                          count={countInMonth(habit.id, monthAnchor)}
+                        />
+                      ))}
+                    </View>
+                  </View>
+                ))}
+              </Animated.View>
+            </GestureDetector>
+          ) : (
+            <GestureDetector gesture={yearTransition.panGesture}>
+              <Animated.View style={yearTransition.animatedStyle}>
+                {groups.map((group) => (
+                  <View key={group.key} style={styles.groupSection}>
+                    <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupTitle}>
+                      {group.name}
+                    </ThemedText>
                     {group.items.map((habit) => (
-                      <MiniMonthCard
+                      <YearlyHeatmap
                         key={habit.id}
                         habit={habit}
-                        month={monthAnchor}
+                        year={yearAnchor}
+                        weeks={yearWeeks}
                         checkedDates={checkedByHabit.get(habit.id) ?? new Set<string>()}
-                        count={countInMonth(habit.id, monthAnchor)}
+                        count={countInYear(habit.id, yearAnchor)}
                       />
                     ))}
                   </View>
-                </View>
-              ))}
-            </View>
-          ) : (
-            <View {...yearSwipe}>
-              {groups.map((group) => (
-                <View key={group.key} style={styles.groupSection}>
-                  <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupTitle}>
-                    {group.name}
-                  </ThemedText>
-                  {group.items.map((habit) => (
-                    <YearlyHeatmap
-                      key={habit.id}
-                      habit={habit}
-                      year={yearAnchor}
-                      weeks={yearWeeks}
-                      checkedDates={checkedByHabit.get(habit.id) ?? new Set<string>()}
-                      count={countInYear(habit.id, yearAnchor)}
-                    />
-                  ))}
-                </View>
-              ))}
-            </View>
+                ))}
+              </Animated.View>
+            </GestureDetector>
           )}
         </ScrollView>
       )}

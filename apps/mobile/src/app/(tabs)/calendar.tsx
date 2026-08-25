@@ -8,13 +8,18 @@ import type { CheckIn, Habit } from '@habit-tracker/core';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
-import { useSwipeNavigation } from '@/hooks/use-swipe-navigation';
+import { useMonthSlideCarousel } from '@/hooks/use-month-slide-carousel';
+import { MonthSlideTrack } from '@/components/month-slide-track';
 import { YearMonthPickerModal } from '@/components/year-month-picker-modal';
 import { habitRepository, checkInRepository } from '@/composition/container';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const GRID_GAP = 6;
 const CONTAINER_PADDING = 20;
+// A month grid can span 5 or 6 weeks depending on where the 1st falls; fixing
+// the swipe viewport to the max keeps its height constant so adjacent months
+// never get clipped and the grid doesn't jump as you slide between them.
+const MAX_WEEK_ROWS = 6;
 
 export default function CalendarScreen() {
   const theme = useTheme();
@@ -40,12 +45,6 @@ export default function CalendarScreen() {
   // row instead of filling the Saturday column.
   const cellSize = Math.floor((windowWidth - CONTAINER_PADDING * 2 - GRID_GAP * 6) / 7);
   const days = useMemo(() => eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) }), [month]);
-  // Leading blanks so the 1st falls under its actual weekday column instead of
-  // always starting at the grid's top-left cell regardless of day-of-week.
-  const leadingBlanks = useMemo(
-    () => Array.from({ length: getDay(startOfMonth(month)) }, (_, index) => `blank-${index}`),
-    [month],
-  );
 
   const checkInsByDate = useMemo(() => {
     const map: Record<string, CheckIn[]> = {};
@@ -68,22 +67,22 @@ export default function CalendarScreen() {
 
   const habitById = new Map(habits.map((habit) => [habit.id, habit]));
   const selectedCheckIns = selectedDate ? (checkInsByDate[selectedDate] ?? []) : [];
-  const swipeHandlers = useSwipeNavigation(
-    () => setMonth((m) => addMonths(m, 1)),
-    () => setMonth((m) => subMonths(m, 1)),
-  );
   const isCurrentMonth = isSameMonth(month, new Date());
+
+  const containerWidth = windowWidth - CONTAINER_PADDING * 2;
+  const { prevMonth, nextMonth, viewportHeight, panGesture, carouselTrackStyle, goToMonth, resetToMonth } =
+    useMonthSlideCarousel({ month, setMonth, containerWidth, rowHeight: cellSize, rowGap: GRID_GAP, maxRows: MAX_WEEK_ROWS });
 
   return (
     <ThemedView style={[styles.container, { paddingTop: insets.top + CONTAINER_PADDING }]}>
       <View style={styles.monthHeader}>
-        <Pressable onPress={() => setMonth((m) => subMonths(m, 1))} hitSlop={8}>
+        <Pressable onPress={() => goToMonth(-1)} hitSlop={8}>
           <Ionicons name="chevron-back" size={22} color={theme.text} />
         </Pressable>
         <Pressable onPress={() => setPickerVisible(true)} hitSlop={8}>
           <ThemedText type="subtitle">{format(month, 'yyyy년 M월')}</ThemedText>
         </Pressable>
-        <Pressable onPress={() => setMonth((m) => addMonths(m, 1))} hitSlop={8}>
+        <Pressable onPress={() => goToMonth(1)} hitSlop={8}>
           <Ionicons name="chevron-forward" size={22} color={theme.text} />
         </Pressable>
       </View>
@@ -93,7 +92,7 @@ export default function CalendarScreen() {
         initialYear={month.getFullYear()}
         initialMonth={month.getMonth()}
         onClose={() => setPickerVisible(false)}
-        onSelect={(year, monthIndex) => setMonth(new Date(year, monthIndex, 1))}
+        onSelect={(year, monthIndex) => resetToMonth(new Date(year, monthIndex, 1))}
       />
 
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -108,40 +107,24 @@ export default function CalendarScreen() {
             </ThemedText>
           ))}
         </View>
-        <View style={styles.grid} {...swipeHandlers}>
-          {leadingBlanks.map((key) => (
-            <View key={key} style={{ width: cellSize, height: cellSize }} />
-          ))}
-          {days.map((day) => {
-            const dateStr = format(day, 'yyyy-MM-dd');
-            const dayCheckIns = checkInsByDate[dateStr] ?? [];
-            const dotColors = dayCheckIns
-              .map((checkIn) => habitById.get(checkIn.habitId)?.color)
-              .filter((color): color is string => Boolean(color));
-
-            return (
-              <Pressable
-                key={dateStr}
-                onPress={() => setSelectedDate(dateStr)}
-                style={[
-                  styles.dayCell,
-                  {
-                    width: cellSize,
-                    height: cellSize,
-                    backgroundColor: theme.backgroundElement,
-                    borderColor: selectedDate === dateStr ? theme.text : 'transparent',
-                  },
-                ]}>
-                <ThemedText type="small">{format(day, 'd')}</ThemedText>
-                <View style={styles.dotsRow}>
-                  {dotColors.slice(0, 4).map((color, index) => (
-                    <View key={index} style={[styles.dot, { backgroundColor: color }]} />
-                  ))}
-                </View>
-              </Pressable>
-            );
-          })}
-        </View>
+        <MonthSlideTrack
+          panes={[prevMonth, month, nextMonth]}
+          containerWidth={containerWidth}
+          viewportHeight={viewportHeight}
+          panGesture={panGesture}
+          trackStyle={carouselTrackStyle}
+          renderMonth={(paneMonth) => (
+            <MonthGrid
+              month={paneMonth}
+              cellSize={cellSize}
+              habitById={habitById}
+              allCheckIns={allCheckIns}
+              selectedDate={selectedDate}
+              onSelectDate={setSelectedDate}
+              theme={theme}
+            />
+          )}
+        />
 
         {selectedDate ? (
           <View style={[styles.detail, { backgroundColor: theme.backgroundElement }]}>
@@ -184,7 +167,7 @@ export default function CalendarScreen() {
         <Pressable
           style={[styles.todayFab, { backgroundColor: theme.text }]}
           onPress={() => {
-            setMonth(new Date());
+            resetToMonth(new Date());
             setSelectedDate(null);
           }}>
           <Ionicons name="today-outline" size={22} color={theme.background} />
@@ -194,13 +177,87 @@ export default function CalendarScreen() {
   );
 }
 
+// One pane of the swipe carousel — renders a single month's day grid. Kept as
+// its own component (rather than inlined) so each of the three panes (prev/
+// current/next) computes its own days/check-ins independently via useMemo.
+function MonthGrid({
+  month,
+  cellSize,
+  habitById,
+  allCheckIns,
+  selectedDate,
+  onSelectDate,
+  theme,
+}: {
+  month: Date;
+  cellSize: number;
+  habitById: Map<string, Habit>;
+  allCheckIns: readonly CheckIn[];
+  selectedDate: string | null;
+  onSelectDate: (date: string) => void;
+  theme: ReturnType<typeof useTheme>;
+}) {
+  const days = useMemo(() => eachDayOfInterval({ start: startOfMonth(month), end: endOfMonth(month) }), [month]);
+  // Leading blanks so the 1st falls under its actual weekday column instead of
+  // always starting at the grid's top-left cell regardless of day-of-week.
+  const leadingBlanks = useMemo(
+    () => Array.from({ length: getDay(startOfMonth(month)) }, (_, index) => `blank-${index}`),
+    [month],
+  );
+  const checkInsByDate = useMemo(() => {
+    const map: Record<string, CheckIn[]> = {};
+    for (const day of days) {
+      const dateStr = format(day, 'yyyy-MM-dd');
+      map[dateStr] = allCheckIns.filter((checkIn) => checkIn.date === dateStr);
+    }
+    return map;
+  }, [days, allCheckIns]);
+
+  return (
+    <View style={styles.grid}>
+      {leadingBlanks.map((key) => (
+        <View key={key} style={{ width: cellSize, height: cellSize }} />
+      ))}
+      {days.map((day) => {
+        const dateStr = format(day, 'yyyy-MM-dd');
+        const dayCheckIns = checkInsByDate[dateStr] ?? [];
+        const dotColors = dayCheckIns
+          .map((checkIn) => habitById.get(checkIn.habitId)?.color)
+          .filter((color): color is string => Boolean(color));
+
+        return (
+          <Pressable
+            key={dateStr}
+            onPress={() => onSelectDate(dateStr)}
+            style={[
+              styles.dayCell,
+              {
+                width: cellSize,
+                height: cellSize,
+                backgroundColor: theme.backgroundElement,
+                borderColor: selectedDate === dateStr ? theme.text : 'transparent',
+              },
+            ]}>
+            <ThemedText type="small">{format(day, 'd')}</ThemedText>
+            <View style={styles.dotsRow}>
+              {dotColors.slice(0, 4).map((color, index) => (
+                <View key={index} style={[styles.dot, { backgroundColor: color }]} />
+              ))}
+            </View>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20 },
   monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   scroll: { paddingBottom: 40 },
   weekdayRow: { flexDirection: 'row', gap: GRID_GAP, marginBottom: 8 },
   weekdayLabel: { textAlign: 'center' },
-  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP },
+  grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP, alignContent: 'flex-start' },
   dayCell: {
     borderRadius: 10,
     borderWidth: 1.5,
