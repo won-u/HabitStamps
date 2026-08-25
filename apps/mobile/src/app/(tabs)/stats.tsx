@@ -113,14 +113,17 @@ export default function StatsScreen() {
   }, [yearAnchor]);
 
   const weekTransition = useSlideTransition(
+    weekAnchor,
     () => setWeekAnchor((d) => addWeeks(d, 1)),
     () => setWeekAnchor((d) => subWeeks(d, 1)),
   );
   const monthTransition = useSlideTransition(
+    monthAnchor,
     () => setMonthAnchor((d) => addMonths(d, 1)),
     () => setMonthAnchor((d) => subMonths(d, 1)),
   );
   const yearTransition = useSlideTransition(
+    yearAnchor,
     () => setYearAnchor((d) => addYears(d, 1)),
     () => setYearAnchor((d) => subYears(d, 1)),
   );

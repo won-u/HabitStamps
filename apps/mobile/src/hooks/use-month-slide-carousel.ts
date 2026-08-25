@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useLayoutEffect, useMemo } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { ViewStyle } from 'react-native';
 import { addMonths, subMonths } from 'date-fns';
@@ -37,14 +37,20 @@ export function useMonthSlideCarousel({ month, setMonth, containerWidth, rowHeig
   const translateX = useSharedValue(-containerWidth);
   const isAnimating = useSharedValue(false);
 
-  useEffect(() => {
+  // A layout effect (not a plain effect) so this runs synchronously right
+  // after `month` — and the panes derived from it — have committed to the
+  // native tree, but before that frame paints. Resetting translateX any
+  // earlier (e.g. inline in the gesture's completion callback) snaps the
+  // strip back to center a frame before the pane there actually shows the
+  // new month, which reads as a flash of the old month right after the
+  // slide finishes.
+  useLayoutEffect(() => {
     translateX.value = -containerWidth;
-  }, [containerWidth, translateX]);
+    isAnimating.value = false;
+  }, [month, containerWidth, translateX, isAnimating]);
 
   const commitMonth = (direction: 1 | -1) => {
     setMonth((m) => (direction === 1 ? addMonths(m, 1) : subMonths(m, 1)));
-    translateX.value = -containerWidth;
-    isAnimating.value = false;
   };
 
   const triggerSlide = (direction: 1 | -1 | 0) => {
@@ -58,6 +64,8 @@ export function useMonthSlideCarousel({ month, setMonth, containerWidth, rowHeig
       return;
     }
     const target = direction === 1 ? -containerWidth * 2 : 0;
+    // isAnimating stays true until the layout effect above fires (i.e. until
+    // `month` has actually re-rendered) — commitMonth doesn't clear it itself.
     translateX.value = withTiming(target, { duration: SLIDE_DURATION }, (finished) => {
       if (finished) runOnJS(commitMonth)(direction);
       else isAnimating.value = false;
@@ -68,8 +76,6 @@ export function useMonthSlideCarousel({ month, setMonth, containerWidth, rowHeig
 
   const resetToMonth = (nextValue: Date) => {
     setMonth(nextValue);
-    translateX.value = -containerWidth;
-    isAnimating.value = false;
   };
 
   const panGesture = Gesture.Pan()
