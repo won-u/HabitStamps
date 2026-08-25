@@ -6,7 +6,7 @@
 // 직접 받아 그 안의 <script src>/<link href>를 정규식으로 뽑아 함께 캐시한다.
 // 이렇게 하면 첫 방문 한 번만으로 셸 전체가 캐시되어, 재방문 없이도 바로
 // 오프라인에서 열릴 수 있다.
-const CACHE_NAME = 'habit-tracker-shell-v3';
+const CACHE_NAME = 'habit-tracker-shell-v4';
 
 async function precacheShell(cache) {
   const shellResponse = await fetch('/', { cache: 'no-store' });
