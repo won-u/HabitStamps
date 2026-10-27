@@ -14,6 +14,8 @@ export const checkInSchema = baseSyncFieldsSchema.extend({
   photoUri: z.string().nullable(),
   /** quantitative habits (e.g. "8 glasses of water"); null for plain check/uncheck habits */
   value: z.number().nullable(),
+  /** denim habits: washed after that day's wear */
+  washed: z.boolean(),
 });
 export type CheckIn = z.infer<typeof checkInSchema>;
 
@@ -22,7 +24,7 @@ export type LocalCheckIn = z.infer<typeof localCheckInSchema>;
 
 export const createCheckInInputSchema = checkInSchema
   .omit({ id: true, createdAt: true, updatedAt: true, version: true, deletedAt: true })
-  .partial({ note: true, photoUri: true, value: true });
+  .partial({ note: true, photoUri: true, value: true, washed: true });
 export type CreateCheckInInput = z.infer<typeof createCheckInInputSchema>;
 
 export const updateCheckInInputSchema = createCheckInInputSchema.partial();

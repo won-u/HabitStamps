@@ -21,6 +21,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
 import { useMonthSlideCarousel } from '@/hooks/use-month-slide-carousel';
 import { MonthSlideTrack } from '@/components/month-slide-track';
+import { DenimCard } from '@/components/denim-card';
 import { habitRepository, checkInRepository } from '@/composition/container';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -53,6 +54,12 @@ export default function HabitDetailScreen() {
 
   const today = format(new Date(), 'yyyy-MM-dd');
   const checkedDates = useMemo(() => new Set(checkIns.map((checkIn) => checkIn.date)), [checkIns]);
+  const washedDates = useMemo(
+    () => new Set(checkIns.filter((checkIn) => checkIn.washed).map((checkIn) => checkIn.date)),
+    [checkIns],
+  );
+  // Denim: the selected day's stamp, so it can be marked as washed.
+  const selectedStamp = habit?.denim ? checkIns.find((checkIn) => checkIn.date === selectedDate) ?? null : null;
 
   const { current, longest, currentRange, longestRange } = useMemo(() => {
     if (!habit) return { current: 0, longest: 0, currentRange: null, longestRange: null };
@@ -142,6 +149,7 @@ export default function HabitDetailScreen() {
               <MonthGrid
                 month={paneMonth}
                 checkedDates={checkedDates}
+                washedDates={washedDates}
                 color={habit.color}
                 todayStr={today}
                 selectedDate={selectedDate}
@@ -153,7 +161,33 @@ export default function HabitDetailScreen() {
           <ThemedText themeColor="textSecondary" style={styles.monthCount}>
             이번 달 {monthlyCheckedCount}회 체크인
           </ThemedText>
+
+          {selectedStamp ? (
+            <View style={styles.washRow}>
+              <ThemedText type="small">{selectedStamp.date.replaceAll('-', '.')} 착용</ThemedText>
+              <Pressable
+                onPress={() => checkInRepository.update(selectedStamp.id, { washed: !selectedStamp.washed })}
+                style={[
+                  styles.washChip,
+                  { backgroundColor: selectedStamp.washed ? habit.color : theme.background },
+                ]}>
+                <Ionicons name="water" size={14} color={selectedStamp.washed ? '#FFFFFF' : theme.textSecondary} />
+                <ThemedText type="small" style={selectedStamp.washed ? styles.checkedDayText : undefined}>
+                  {selectedStamp.washed ? '세탁함' : '세탁 안 함'}
+                </ThemedText>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
+
+        {habit.denim ? (
+          <DenimCard
+            denim={habit.denim}
+            stamps={checkIns}
+            color={habit.color}
+            onChange={async (denim) => setHabit(await habitRepository.update(habit.id, { denim }))}
+          />
+        ) : null}
 
         <View style={styles.statisticSection}>
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.statisticTitle}>
@@ -236,6 +270,8 @@ export default function HabitDetailScreen() {
 interface MonthGridProps {
   month: Date;
   checkedDates: Set<string>;
+  /** denim habits: stamped days that were washed get a drop */
+  washedDates: Set<string>;
   color: string;
   todayStr: string;
   selectedDate: string | null;
@@ -243,7 +279,7 @@ interface MonthGridProps {
 }
 
 /** The DayStamps signature visual: consecutive checked days in the same week merge into one connected pill. */
-function MonthGrid({ month, checkedDates, color, todayStr, selectedDate, onDayPress }: MonthGridProps) {
+function MonthGrid({ month, checkedDates, washedDates, color, todayStr, selectedDate, onDayPress }: MonthGridProps) {
   const theme = useTheme();
   const weeks = useMemo(() => {
     const gridStart = startOfWeek(startOfMonth(month), { weekStartsOn: 0 });
@@ -298,6 +334,9 @@ function MonthGrid({ month, checkedDates, color, todayStr, selectedDate, onDayPr
                       }>
                       {format(day, 'd')}
                     </ThemedText>
+                    {isChecked && washedDates.has(dateStr) ? (
+                      <Ionicons name="water" size={9} color="#FFFFFF" style={styles.washDrop} />
+                    ) : null}
                   </View>
                 </Pressable>
               </View>
@@ -320,6 +359,9 @@ const styles = StyleSheet.create({
   dayCellPressable: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' },
   dayPill: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', borderRadius: 999 },
   checkedDayText: { color: '#FFFFFF', fontWeight: '700' },
+  washDrop: { position: 'absolute', top: 4, right: 8 },
+  washRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 10 },
+  washChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
   streakRow: { flexDirection: 'row', gap: 12 },
   streakCard: { flex: 1, borderRadius: 20, padding: 16, gap: 6 },
   streakLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },

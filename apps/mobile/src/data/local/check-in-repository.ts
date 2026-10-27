@@ -79,6 +79,7 @@ export class LocalCheckInRepository implements CheckInRepository {
       note: input.note ?? null,
       photoUri: input.photoUri ?? null,
       value: input.value ?? null,
+      washed: input.washed ?? false,
       createdAt: now,
       updatedAt: now,
       version: 1,

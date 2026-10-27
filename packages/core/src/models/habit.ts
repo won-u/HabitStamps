@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { baseSyncFieldsSchema, localSyncFieldsSchema } from "./base";
+import { denimInfoSchema } from "./denim";
 
 export const frequencyTypeSchema = z.enum(["daily", "weekdays", "timesPerWeek", "timesPerMonth"]);
 export type FrequencyType = z.infer<typeof frequencyTypeSchema>;
@@ -23,6 +24,8 @@ export const habitSchema = baseSyncFieldsSchema.extend({
   frequencyConfig: frequencyConfigSchema,
   isArchived: z.boolean(),
   sortOrder: z.number().int(),
+  /** Set for denim habits (wears, washes, 다세탁 — see denim.ts); null for every other habit. */
+  denim: denimInfoSchema.nullable(),
 });
 export type Habit = z.infer<typeof habitSchema>;
 
@@ -32,7 +35,7 @@ export type LocalHabit = z.infer<typeof localHabitSchema>;
 
 export const createHabitInputSchema = habitSchema
   .omit({ id: true, createdAt: true, updatedAt: true, version: true, deletedAt: true })
-  .partial({ isArchived: true, sortOrder: true, categoryId: true });
+  .partial({ isArchived: true, sortOrder: true, categoryId: true, denim: true });
 export type CreateHabitInput = z.infer<typeof createHabitInputSchema>;
 
 export const updateHabitInputSchema = createHabitInputSchema.partial();

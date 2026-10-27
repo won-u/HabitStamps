@@ -156,6 +156,8 @@ Supabase 대시보드의 **Table Editor**에서 `habits`/`check_ins`/`categories
 
 `docs/supabase-schema.sql`을 고치고, SQL Editor에서 **전체 파일**을 다시 실행한다(부분 실행 X — `create table if not exists`/`create or replace function`/`drop policy if exists` 위주로 작성돼 있어서 전체 재실행이 항상 안전하다). 이미 로그인해서 쓰고 있는 기기가 있어도 마이그레이션 스텝이 따로 필요 없다 — 새 엔티티가 추가되면 그 기기의 기존 로컬 행들은 여전히 `syncStatus: 'pending'`인 채로 남아있어서 다음 자동 동기화 때 정상적으로 올라간다.
 
+**열을 추가할 때는 SQL부터, 앱 배포는 그다음.** 새 앱이 새 값을 올렸는데 서버에 그 열이 없으면, 서버는 그 값을 버리고 다음 pull이 "값 없음"으로 로컬을 덮어쓴다. 그리고 업서트 RPC에서 새 열은 `case when r ? '열이름' then excluded.열 else 기존값 end`로 갱신한다 — 친구들 폰에 남은 옛 버전 앱은 그 키를 안 보내므로, 이렇게 안 하면 옛 앱이 동기화할 때마다 새 값을 지운다(2026-10 데님 `denim`/`washed`가 이 방식). 로컬 검증: `apps/mobile/scripts/supabase-test/`의 `00-stub-auth.sql` → `docs/supabase-schema.sql`(두 번) → `06-verify-denim-and-export.sql`을 임시 Postgres에 순서대로 실행.
+
 ---
 
 ## 자주 겪는 문제 체크리스트

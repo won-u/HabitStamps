@@ -11,6 +11,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { useSettingsStore, type ColorSchemePreference } from '@/state/settings-store';
 import { getConfiguredSupabaseClient, runSync } from '@/composition/container';
 import { signInWithGoogle, signOutSupabase } from '@/data/supabase/auth';
+import { ExportTokenSection } from '@/components/export-token-section';
 
 const SCHEME_OPTIONS: { value: ColorSchemePreference; label: string }[] = [
   { value: 'system', label: '시스템 설정' },
@@ -107,6 +108,11 @@ export default function SettingsScreen() {
                 마지막 동기화: {new Date(lastSyncedAt).toLocaleString()}
               </ThemedText>
             ) : null}
+
+            <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
+              외부 앱 연동 (읽기 전용)
+            </ThemedText>
+            <ExportTokenSection />
           </>
         ) : (
           <>

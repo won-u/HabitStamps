@@ -37,6 +37,7 @@ export class LocalHabitRepository implements HabitRepository {
       frequencyConfig: input.frequencyConfig,
       isArchived: input.isArchived ?? false,
       sortOrder: input.sortOrder ?? 0,
+      denim: input.denim ?? null,
       createdAt: now,
       updatedAt: now,
       version: 1,

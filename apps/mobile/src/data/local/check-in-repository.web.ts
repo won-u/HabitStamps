@@ -8,8 +8,9 @@ import type {
 import { getWebDb, type LocalCheckInRow } from "./web-db";
 import { ObservableSet } from "./observable-set";
 
+// Rows stored before denim support have no `washed`.
 function toCheckIn({ syncStatus: _syncStatus, ...rest }: LocalCheckInRow): CheckIn {
-  return rest;
+  return { ...rest, washed: rest.washed ?? false };
 }
 
 export class LocalCheckInRepository implements CheckInRepository {
@@ -33,6 +34,7 @@ export class LocalCheckInRepository implements CheckInRepository {
       note: input.note ?? null,
       photoUri: input.photoUri ?? null,
       value: input.value ?? null,
+      washed: input.washed ?? false,
       createdAt: now,
       updatedAt: now,
       version: 1,

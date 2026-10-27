@@ -1,6 +1,7 @@
 import type {
   Category,
   CheckIn,
+  DenimInfo,
   EntityChangeSet,
   Habit,
   SyncChangeSet,
@@ -21,6 +22,7 @@ interface HabitRow {
   frequency_config: Record<string, unknown>;
   is_archived: boolean;
   sort_order: number;
+  denim?: DenimInfo | null;
   created_at: string;
   updated_at: string;
   version: number;
@@ -35,6 +37,7 @@ interface CheckInRow {
   note: string | null;
   photo_uri: string | null;
   value: number | null;
+  washed?: boolean | null;
   created_at: string;
   updated_at: string;
   version: number;
@@ -63,6 +66,7 @@ function rowToHabit(row: HabitRow): Habit {
     frequencyConfig: row.frequency_config as Habit["frequencyConfig"],
     isArchived: row.is_archived,
     sortOrder: row.sort_order,
+    denim: row.denim ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     version: row.version,
@@ -79,6 +83,7 @@ function rowToCheckIn(row: CheckInRow): CheckIn {
     note: row.note,
     photoUri: row.photo_uri,
     value: row.value,
+    washed: row.washed ?? false,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     version: row.version,

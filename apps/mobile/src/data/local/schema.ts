@@ -1,6 +1,6 @@
 import { sqliteTable, text, integer, real, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
-import type { FrequencyConfig, FrequencyType, SyncStatus } from "@habit-tracker/core";
+import type { DenimInfo, FrequencyConfig, FrequencyType, SyncStatus } from "@habit-tracker/core";
 
 /**
  * Mirrors docs/supabase-schema.sql field-for-field, plus one local-only
@@ -19,6 +19,8 @@ export const habits = sqliteTable(
     frequencyConfig: text("frequency_config", { mode: "json" }).$type<FrequencyConfig>().notNull(),
     isArchived: integer("is_archived", { mode: "boolean" }).notNull().default(false),
     sortOrder: integer("sort_order").notNull().default(0),
+    /** null for every habit that is not denim — see @habit-tracker/core denim.ts */
+    denim: text("denim", { mode: "json" }).$type<DenimInfo | null>(),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     version: integer("version").notNull().default(1),
@@ -61,6 +63,7 @@ export const checkIns = sqliteTable(
     note: text("note"),
     photoUri: text("photo_uri"),
     value: real("value"),
+    washed: integer("washed", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull(),
     updatedAt: text("updated_at").notNull(),
     version: integer("version").notNull().default(1),

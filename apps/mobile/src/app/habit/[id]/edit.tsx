@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { router, useLocalSearchParams } from 'expo-router';
-import type { Habit } from '@habit-tracker/core';
+import { EMPTY_DENIM, type Habit } from '@habit-tracker/core';
 
 import { HabitForm, toFrequencyConfig } from '@/components/habit-form';
 import { habitRepository } from '@/composition/container';
@@ -26,7 +26,12 @@ export default function EditHabitScreen() {
         weekdays: habit.frequencyConfig.weekdays ?? [1, 2, 3, 4, 5],
         timesPerWeek: habit.frequencyConfig.timesPerWeek ?? 3,
         timesPerMonth: habit.frequencyConfig.timesPerMonth ?? 10,
+        isDenim: habit.denim !== null,
       }}
+      hasDenimRecords={
+        habit.denim !== null &&
+        (habit.denim.priorWears > 0 || habit.denim.washes.length > 0 || habit.denim.frequentWashAt !== null)
+      }
       submitLabel="저장"
       onSubmit={async (value) => {
         await habitRepository.update(habit.id, {
@@ -36,6 +41,8 @@ export default function EditHabitScreen() {
           categoryId: value.categoryId,
           frequencyType: value.frequencyType,
           frequencyConfig: toFrequencyConfig(value),
+          // Turning denim on keeps what was there; off drops it.
+          denim: value.isDenim ? (habit.denim ?? EMPTY_DENIM) : null,
         });
         router.back();
       }}

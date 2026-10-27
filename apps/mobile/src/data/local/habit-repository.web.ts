@@ -8,8 +8,9 @@ import type {
 import { getWebDb, type LocalHabitRow } from "./web-db";
 import { ObservableSet } from "./observable-set";
 
+// Rows stored before denim support have no `denim`.
 function toHabit({ syncStatus: _syncStatus, ...rest }: LocalHabitRow): Habit {
-  return rest;
+  return { ...rest, denim: rest.denim ?? null };
 }
 
 export class LocalHabitRepository implements HabitRepository {
@@ -34,6 +35,7 @@ export class LocalHabitRepository implements HabitRepository {
       frequencyConfig: input.frequencyConfig,
       isArchived: input.isArchived ?? false,
       sortOrder: input.sortOrder ?? 0,
+      denim: input.denim ?? null,
       createdAt: now,
       updatedAt: now,
       version: 1,

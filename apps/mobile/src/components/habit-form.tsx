@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { Category, FrequencyConfig, FrequencyType } from '@habit-tracker/core';
 
@@ -27,10 +27,14 @@ export interface HabitFormValue {
   weekdays: number[];
   timesPerWeek: number;
   timesPerMonth: number;
+  /** denim habit: wears and washes are kept too (see DenimCard) */
+  isDenim: boolean;
 }
 
 interface Props {
   initial?: Partial<HabitFormValue>;
+  /** editing a denim habit that already has wash records: turning denim off drops them */
+  hasDenimRecords?: boolean;
   submitLabel: string;
   onSubmit: (value: HabitFormValue) => Promise<void>;
   onArchive?: () => Promise<void>;
@@ -47,7 +51,7 @@ export function toFrequencyConfig(
 }
 
 /** Shared by habit/new.tsx and habit/[id]/edit.tsx — see docs/ux-design.md §2-2. */
-export function HabitForm({ initial, submitLabel, onSubmit, onArchive, onDelete }: Props) {
+export function HabitForm({ initial, hasDenimRecords, submitLabel, onSubmit, onArchive, onDelete }: Props) {
   const theme = useTheme();
   const [name, setName] = useState(initial?.name ?? '');
   const [icon, setIcon] = useState(initial?.icon ?? ICON_PRESETS[0]!);
@@ -57,6 +61,7 @@ export function HabitForm({ initial, submitLabel, onSubmit, onArchive, onDelete 
   const [weekdays, setWeekdays] = useState<number[]>(initial?.weekdays ?? [1, 2, 3, 4, 5]);
   const [timesPerWeek, setTimesPerWeek] = useState(initial?.timesPerWeek ?? 3);
   const [timesPerMonth, setTimesPerMonth] = useState(initial?.timesPerMonth ?? 10);
+  const [isDenim, setIsDenim] = useState(initial?.isDenim ?? false);
   const [submitting, setSubmitting] = useState(false);
 
   const [categories, setCategories] = useState<readonly Category[]>([]);
@@ -71,7 +76,17 @@ export function HabitForm({ initial, submitLabel, onSubmit, onArchive, onDelete 
     if (!canSubmit) return;
     setSubmitting(true);
     try {
-      await onSubmit({ name: name.trim(), icon, color, categoryId, frequencyType, weekdays, timesPerWeek, timesPerMonth });
+      await onSubmit({
+        name: name.trim(),
+        icon,
+        color,
+        categoryId,
+        frequencyType,
+        weekdays,
+        timesPerWeek,
+        timesPerMonth,
+        isDenim,
+      });
     } finally {
       setSubmitting(false);
     }
@@ -242,6 +257,18 @@ export function HabitForm({ initial, submitLabel, onSubmit, onArchive, onDelete 
           </View>
         ) : null}
 
+        <View style={[styles.denimRow, styles.sectionLabel]}>
+          <View style={styles.denimText}>
+            <ThemedText>👖 데님 기록</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {isDenim || !hasDenimRecords
+                ? '도장마다 착용으로 세고, 세탁·다세탁 시점을 같이 기록해요.'
+                : '끄고 저장하면 적어 둔 착용·세탁 기록이 지워져요.'}
+            </ThemedText>
+          </View>
+          <Switch value={isDenim} onValueChange={setIsDenim} />
+        </View>
+
         {onArchive ? (
           <Pressable onPress={onArchive} style={[styles.deleteButton, { borderColor: theme.textSecondary, marginTop: 32 }]}>
             <ThemedText themeColor="textSecondary">보관하기</ThemedText>
@@ -281,6 +308,8 @@ const styles = StyleSheet.create({
   dayChip: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 20 },
   stepperButton: { paddingHorizontal: 16, paddingVertical: 8 },
+  denimRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  denimText: { flex: 1, gap: 2 },
   deleteButton: { marginTop: 32, borderWidth: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   submit: { margin: 20, paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
 });

@@ -27,3 +27,13 @@ begin
   end if;
 end $$;
 grant usage on schema public to authenticated;
+
+-- PostgREST calls without a user session run as `anon` (the read-only export
+-- in docs/supabase-schema.sql is called this way).
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'anon') then
+    create role anon;
+  end if;
+end $$;
+grant usage on schema public to anon;

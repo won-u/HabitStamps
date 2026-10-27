@@ -1,4 +1,5 @@
 import { router } from 'expo-router';
+import { EMPTY_DENIM } from '@habit-tracker/core';
 
 import { HabitForm, toFrequencyConfig } from '@/components/habit-form';
 import { habitRepository } from '@/composition/container';
@@ -17,6 +18,7 @@ export default function NewHabitScreen() {
           frequencyConfig: toFrequencyConfig(value),
           isArchived: false,
           sortOrder: 0,
+          denim: value.isDenim ? EMPTY_DENIM : null,
         });
         router.back();
       }}

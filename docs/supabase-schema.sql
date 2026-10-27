@@ -75,6 +75,44 @@ create table if not exists public.categories (
 );
 create index if not exists categories_user_updated_idx on public.categories (user_id, updated_at);
 
+-- Denim habits (2026-10): a habit's wear/wash details (packages/core
+-- models/denim.ts) and whether a day's wear was washed. Older app versions
+-- don't send these keys — the upserts below keep the stored value when a key
+-- is missing, so an old install still in use never wipes them.
+alter table public.habits add column if not exists denim jsonb;
+alter table public.check_ins add column if not exists washed boolean not null default false;
+
+-- When the server last saw a write, set by the trigger below. updated_at is
+-- the writing device's clock, so a device that was offline can push a change
+-- "from the past"; a reader that needs every change since some point (the
+-- read-only export at the end of this file) uses this column instead.
+alter table public.habits add column if not exists server_updated_at timestamptz not null default now();
+alter table public.check_ins add column if not exists server_updated_at timestamptz not null default now();
+alter table public.categories add column if not exists server_updated_at timestamptz not null default now();
+create index if not exists habits_user_server_updated_idx on public.habits (user_id, server_updated_at);
+create index if not exists check_ins_user_server_updated_idx on public.check_ins (user_id, server_updated_at);
+create index if not exists categories_user_server_updated_idx on public.categories (user_id, server_updated_at);
+
+create or replace function public.touch_server_updated_at() returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+begin
+  new.server_updated_at := clock_timestamp();
+  return new;
+end;
+$$;
+
+drop trigger if exists habits_touch_server_updated_at on public.habits;
+create trigger habits_touch_server_updated_at before insert or update on public.habits
+  for each row execute function public.touch_server_updated_at();
+drop trigger if exists check_ins_touch_server_updated_at on public.check_ins;
+create trigger check_ins_touch_server_updated_at before insert or update on public.check_ins
+  for each row execute function public.touch_server_updated_at();
+drop trigger if exists categories_touch_server_updated_at on public.categories;
+create trigger categories_touch_server_updated_at before insert or update on public.categories
+  for each row execute function public.touch_server_updated_at();
+
 alter table public.habits enable row level security;
 alter table public.check_ins enable row level security;
 alter table public.categories enable row level security;
@@ -141,13 +179,14 @@ begin
     begin
       insert into public.habits (
         id, user_id, name, icon, color, category_id, frequency_type, frequency_config,
-        is_archived, sort_order, created_at, updated_at, version, deleted_at
+        is_archived, sort_order, denim, created_at, updated_at, version, deleted_at
       )
       values (
         (r->>'id')::uuid, uid, r->>'name', r->>'icon', r->>'color',
         nullif(r->>'categoryId', '')::uuid, r->>'frequencyType',
         coalesce(r->'frequencyConfig', '{}'::jsonb),
         (r->>'isArchived')::boolean, (r->>'sortOrder')::integer,
+        nullif(r->'denim', 'null'::jsonb),
         (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
         (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
       )
@@ -156,7 +195,9 @@ begin
         category_id = excluded.category_id, frequency_type = excluded.frequency_type,
         frequency_config = excluded.frequency_config, is_archived = excluded.is_archived,
         sort_order = excluded.sort_order, updated_at = excluded.updated_at,
-        version = excluded.version, deleted_at = excluded.deleted_at
+        version = excluded.version, deleted_at = excluded.deleted_at,
+        -- An older app version doesn't know `denim`: keep what is stored.
+        denim = case when r ? 'denim' then excluded.denim else public.habits.denim end
       where public.habits.user_id = uid and public.habits.updated_at < excluded.updated_at
       returning id into did;
     exception when others then
@@ -200,20 +241,22 @@ begin
     -- (bad cast, etc.) shouldn't abort the rest of the batch either.
     begin
       insert into public.check_ins (
-        id, user_id, habit_id, date, completed_at, note, photo_uri, value,
+        id, user_id, habit_id, date, completed_at, note, photo_uri, value, washed,
         created_at, updated_at, version, deleted_at
       )
       values (
         (r->>'id')::uuid, uid, (r->>'habitId')::uuid, (r->>'date')::date,
         (r->>'completedAt')::timestamptz, r->>'note', r->>'photoUri',
-        nullif(r->>'value', '')::numeric,
+        nullif(r->>'value', '')::numeric, coalesce((r->>'washed')::boolean, false),
         (r->>'createdAt')::timestamptz, (r->>'updatedAt')::timestamptz,
         (r->>'version')::integer, nullif(r->>'deletedAt', '')::timestamptz
       )
       on conflict (id) do update set
         habit_id = excluded.habit_id, date = excluded.date, completed_at = excluded.completed_at,
         note = excluded.note, photo_uri = excluded.photo_uri, value = excluded.value,
-        updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at
+        updated_at = excluded.updated_at, version = excluded.version, deleted_at = excluded.deleted_at,
+        -- An older app version doesn't know `washed`: keep what is stored.
+        washed = case when r ? 'washed' then excluded.washed else public.check_ins.washed end
       where public.check_ins.user_id = uid and public.check_ins.updated_at < excluded.updated_at
       returning id into did;
     exception
@@ -278,3 +321,98 @@ end;
 $$;
 
 grant execute on function public.sync_upsert_habits, public.sync_upsert_check_ins, public.sync_upsert_categories to authenticated;
+
+-- === Read-only export (2026-10) ===========================================
+-- Lets another app of the same user (Personal Hermes, a self-hosted assistant)
+-- keep a copy of their habits without their Google session or the service
+-- key. The user makes a token in Settings; only its sha256 is stored. The
+-- export function returns that user's rows only, read-only, and nothing
+-- else in this project. Making a new token replaces the old one; revoking
+-- deletes it.
+create table if not exists public.export_tokens (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  token_hash text not null unique,
+  created_at timestamptz not null default now()
+);
+-- No policies: clients never read this table, only the functions below do.
+alter table public.export_tokens enable row level security;
+
+create or replace function public.create_export_token() returns text
+language plpgsql security definer
+set search_path = public, pg_temp
+as $$
+declare
+  uid uuid := auth.uid();
+  token text;
+begin
+  if uid is null then raise exception 'not authenticated'; end if;
+  -- gen_random_uuid() draws from pg_strong_random: two of them = 244 random bits.
+  token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
+  insert into public.export_tokens (user_id, token_hash)
+  values (uid, encode(sha256(convert_to(token, 'UTF8')), 'hex'))
+  on conflict (user_id) do update set token_hash = excluded.token_hash, created_at = now();
+  return token;
+end;
+$$;
+
+create or replace function public.revoke_export_token() returns void
+language plpgsql security definer
+set search_path = public, pg_temp
+as $$
+begin
+  if auth.uid() is null then raise exception 'not authenticated'; end if;
+  delete from public.export_tokens where user_id = auth.uid();
+end;
+$$;
+
+create or replace function public.export_token_created_at() returns timestamptz
+language sql stable security definer
+set search_path = public, pg_temp
+as $$
+  select created_at from public.export_tokens where user_id = auth.uid();
+$$;
+
+-- Every row of the token's user changed after `since` (server_updated_at, so
+-- late pushes from offline devices are not missed), or all of them when
+-- `since` is null. `server_time` is the next call's `since`; a reader should
+-- step back a few minutes from it, since a write still in flight when this
+-- ran can commit with an earlier server_updated_at.
+create or replace function public.export_since(token text, since timestamptz default null) returns jsonb
+language plpgsql stable security definer
+set search_path = public, pg_temp
+as $$
+declare
+  uid uuid;
+  started timestamptz := clock_timestamp();
+begin
+  select user_id into uid from public.export_tokens
+  where token_hash = encode(sha256(convert_to(coalesce(token, ''), 'UTF8')), 'hex');
+  if uid is null then raise exception 'invalid export token' using errcode = '28000'; end if;
+
+  return jsonb_build_object(
+    'server_time', started,
+    'habits', coalesce((
+      select jsonb_agg(to_jsonb(h) - 'user_id') from public.habits h
+      where h.user_id = uid and (since is null or h.server_updated_at > since)
+    ), '[]'::jsonb),
+    'check_ins', coalesce((
+      select jsonb_agg(to_jsonb(c) - 'user_id') from public.check_ins c
+      where c.user_id = uid and (since is null or c.server_updated_at > since)
+    ), '[]'::jsonb),
+    'categories', coalesce((
+      select jsonb_agg(to_jsonb(g) - 'user_id') from public.categories g
+      where g.user_id = uid and (since is null or g.server_updated_at > since)
+    ), '[]'::jsonb)
+  );
+end;
+$$;
+
+revoke all on function public.create_export_token, public.revoke_export_token,
+  public.export_token_created_at, public.export_since from public;
+-- Supabase grants anon execute on new public functions by default: take it back.
+revoke execute on function public.create_export_token, public.revoke_export_token,
+  public.export_token_created_at from anon;
+grant execute on function public.create_export_token, public.revoke_export_token,
+  public.export_token_created_at to authenticated;
+-- The other app calls with the public anon key plus the token.
+grant execute on function public.export_since to anon, authenticated;
