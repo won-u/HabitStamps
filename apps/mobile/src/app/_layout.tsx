@@ -77,6 +77,7 @@ export default function RootLayout() {
           screenOptions={{
             headerStyle: { backgroundColor: theme.background },
             headerTintColor: theme.text,
+            headerTitleStyle: { fontFamily: 'NotoSansKR_700Bold', fontSize: 17 },
             headerShadowVisible: false,
             contentStyle: { backgroundColor: theme.background },
           }}>

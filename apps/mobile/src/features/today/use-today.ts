@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { differenceInCalendarDays, format, startOfMonth, startOfWeek, subDays } from 'date-fns';
-import * as Haptics from 'expo-haptics';
 import type { CheckIn, FrequencyConfig, FrequencyType, Habit } from '@habit-tracker/core';
 import { calculateStreak } from '@habit-tracker/core';
 import { habitRepository, checkInRepository } from '@/composition/container';
@@ -99,9 +98,11 @@ export function useToday() {
     });
   }, [habits, checkInsByHabit, viewedDate, today]);
 
+  // Haptics fire from the card's tap handler itself (synchronously, inside
+  // the user gesture) — the iOS web haptic trick in lib/haptics.web.ts is
+  // ignored once we're past an `await`.
   async function toggleCheckIn(habit: Habit) {
-    const result = await checkInRepository.toggle(habit.id, viewedDate);
-    if (result) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    return checkInRepository.toggle(habit.id, viewedDate);
   }
 
   return { today, viewedDate, setViewedDate, items, toggleCheckIn };

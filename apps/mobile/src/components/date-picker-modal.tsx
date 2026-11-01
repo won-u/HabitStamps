@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { Ionicons } from '@expo/vector-icons';
 import { eachDayOfInterval, endOfMonth, endOfWeek, format, isSameMonth, startOfMonth, startOfWeek } from 'date-fns';
 import { ko } from 'date-fns/locale';
@@ -43,7 +44,8 @@ export function DatePickerModal({ visible, initialDate, maxDate, onClose, onSele
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
-        <Pressable style={[styles.card, { backgroundColor: theme.background }]} onPress={(e) => e.stopPropagation()}>
+        <Animated.View entering={FadeInDown.springify().damping(17)}>
+        <Pressable style={[styles.card, { backgroundColor: theme.backgroundElement }]} onPress={(e) => e.stopPropagation()}>
           <View style={styles.header}>
             <Pressable onPress={() => goToMonth(-1)} hitSlop={8}>
               <Ionicons name="chevron-back" size={20} color={theme.text} />
@@ -57,7 +59,7 @@ export function DatePickerModal({ visible, initialDate, maxDate, onClose, onSele
           <View style={styles.weekRow}>
             {WEEKDAY_LABELS.map((label, index) => (
               <View key={label} style={styles.dayCell}>
-                <ThemedText type="small" style={index === 0 ? { color: '#E85D75' } : { color: theme.textSecondary }}>
+                <ThemedText type="small" style={index === 0 ? { color: theme.danger } : { color: theme.textSecondary }}>
                   {label}
                 </ThemedText>
               </View>
@@ -75,6 +77,7 @@ export function DatePickerModal({ visible, initialDate, maxDate, onClose, onSele
             )}
           />
         </Pressable>
+        </Animated.View>
       </Pressable>
     </Modal>
   );
@@ -146,8 +149,8 @@ function MonthGrid({ month, today, initialDate, onSelect, onClose }: MonthGridPr
 }
 
 const styles = StyleSheet.create({
-  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 24 },
-  card: { borderRadius: 20, padding: 16 },
+  backdrop: { flex: 1, backgroundColor: 'rgba(8,9,14,0.45)', justifyContent: 'center', padding: 24 },
+  card: { borderRadius: 26, padding: 16, boxShadow: '0px 20px 50px rgba(0,0,0,0.25)' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   weekRow: { flexDirection: 'row' },
   dayCell: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center' },

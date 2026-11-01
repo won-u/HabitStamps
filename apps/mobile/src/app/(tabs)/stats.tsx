@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import Animated from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { GestureDetector } from 'react-native-gesture-handler';
 import {
   addMonths,
@@ -32,14 +32,27 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
 import { useSlideTransition } from '@/hooks/use-slide-transition';
+import { withAlpha } from '@/constants/theme';
 import { habitRepository, checkInRepository, categoryRepository } from '@/composition/container';
 import { groupByCategory } from '@/features/reports/group-by-category';
+import { SegmentedControl } from '@/components/ui/segmented-control';
+import { PressableScale } from '@/components/ui/pressable-scale';
+import { ProgressBar } from '@/components/ui/progress-bar';
+import { JumpToTodayButton } from '@/components/ui/jump-to-today-button';
+import { useTabBarSpace } from '@/hooks/use-bottom-inset';
+import { useCountUp } from '@/hooks/use-count-up';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const LOOKBACK_DAYS = 90;
 
 type StatsMode = 'summary' | 'weekly' | 'monthly' | 'yearly';
-const MODE_LABELS: Record<StatsMode, string> = { summary: '요약', weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' };
+const MODE_OPTIONS: { value: StatsMode; label: string }[] = [
+  { value: 'summary', label: '요약' },
+  { value: 'weekly', label: '주간' },
+  { value: 'monthly', label: '월간' },
+  { value: 'yearly', label: '연간' },
+];
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 interface HabitStat {
   habit: Habit;
@@ -58,6 +71,7 @@ export default function StatsScreen() {
   const [weekAnchor, setWeekAnchor] = useState(new Date());
   const [monthAnchor, setMonthAnchor] = useState(new Date());
   const [yearAnchor, setYearAnchor] = useState(new Date());
+  const tabBarSpace = useTabBarSpace();
 
   // observeAll (not a one-shot listAll) so this screen re-renders the moment
   // any check-in changes, even from another screen — see docs/architecture.md.
@@ -159,74 +173,57 @@ export default function StatsScreen() {
     return count;
   }
 
+  const rangeLabel =
+    mode === 'weekly'
+      ? `${format(weekDays[0]!, 'M월 d일', { locale: ko })} – ${format(weekDays[6]!, 'M월 d일', { locale: ko })}`
+      : mode === 'monthly'
+        ? format(monthAnchor, 'yyyy년 M월', { locale: ko })
+        : format(yearAnchor, 'yyyy년', { locale: ko });
+  const activeTransition = mode === 'weekly' ? weekTransition : mode === 'monthly' ? monthTransition : yearTransition;
+
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top + 20 }]}>
-      <ThemedText type="title">통계</ThemedText>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 12 }]}>
+      <ThemedText type="smallBold" themeColor="textSecondary">
+        나의 기록
+      </ThemedText>
+      <ThemedText type="title" style={styles.title}>
+        통계
+      </ThemedText>
 
-      <View style={styles.segmentRow}>
-        {(['summary', 'weekly', 'monthly', 'yearly'] as StatsMode[]).map((m) => (
-          <Pressable
-            key={m}
-            onPress={() => setMode(m)}
-            style={[styles.segment, { backgroundColor: mode === m ? theme.text : theme.backgroundElement }]}>
-            <ThemedText style={{ color: mode === m ? theme.background : theme.text }}>{MODE_LABELS[m]}</ThemedText>
-          </Pressable>
-        ))}
-      </View>
+      <SegmentedControl options={MODE_OPTIONS} value={mode} onChange={setMode} style={styles.segmentRow} />
 
-      {mode === 'weekly' ? (
+      {mode !== 'summary' ? (
         <View style={styles.rangeHeader}>
-          <Pressable onPress={() => weekTransition.slide(-1)} hitSlop={8}>
-            <Ionicons name="chevron-back" size={20} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">
-            {format(weekDays[0]!, 'M월 d일', { locale: ko })} - {format(weekDays[6]!, 'M월 d일', { locale: ko })}
-          </ThemedText>
-          <Pressable onPress={() => weekTransition.slide(1)} hitSlop={8}>
-            <Ionicons name="chevron-forward" size={20} color={theme.text} />
-          </Pressable>
-        </View>
-      ) : mode === 'monthly' ? (
-        <View style={styles.rangeHeader}>
-          <Pressable onPress={() => monthTransition.slide(-1)} hitSlop={8}>
-            <Ionicons name="chevron-back" size={20} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">{format(monthAnchor, 'yyyy년 M월', { locale: ko })}</ThemedText>
-          <Pressable onPress={() => monthTransition.slide(1)} hitSlop={8}>
-            <Ionicons name="chevron-forward" size={20} color={theme.text} />
-          </Pressable>
-        </View>
-      ) : mode === 'yearly' ? (
-        <View style={styles.rangeHeader}>
-          <Pressable onPress={() => yearTransition.slide(-1)} hitSlop={8}>
-            <Ionicons name="chevron-back" size={20} color={theme.text} />
-          </Pressable>
-          <ThemedText type="smallBold">{format(yearAnchor, 'yyyy년', { locale: ko })}</ThemedText>
-          <Pressable onPress={() => yearTransition.slide(1)} hitSlop={8}>
-            <Ionicons name="chevron-forward" size={20} color={theme.text} />
-          </Pressable>
+          <PressableScale
+            hapticKind="selection"
+            accessibilityLabel="이전"
+            onPress={() => activeTransition.slide(-1)}
+            style={[styles.navButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <Ionicons name="chevron-back" size={18} color={theme.text} />
+          </PressableScale>
+          <ThemedText type="smallBold">{rangeLabel}</ThemedText>
+          <PressableScale
+            hapticKind="selection"
+            accessibilityLabel="다음"
+            onPress={() => activeTransition.slide(1)}
+            style={[styles.navButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <Ionicons name="chevron-forward" size={18} color={theme.text} />
+          </PressableScale>
         </View>
       ) : null}
 
       {mode === 'summary' ? (
-        <>
-          <View style={styles.tileRow}>
+        <ScrollView contentContainerStyle={{ paddingBottom: tabBarSpace }} showsVerticalScrollIndicator={false}>
+          <View style={styles.tileGrid}>
             {(
               [
-                { label: '이번주', value: periodCounts.thisWeek },
-                { label: '이번달', value: periodCounts.thisMonth },
-                { label: '올해', value: periodCounts.thisYear },
-                { label: '전체', value: periodCounts.allTime },
+                { label: '이번주', value: periodCounts.thisWeek, icon: 'today-outline', highlight: true },
+                { label: '이번달', value: periodCounts.thisMonth, icon: 'calendar-outline', highlight: false },
+                { label: '올해', value: periodCounts.thisYear, icon: 'sparkles-outline', highlight: false },
+                { label: '전체', value: periodCounts.allTime, icon: 'trophy-outline', highlight: false },
               ] as const
-            ).map((tile) => (
-              <View key={tile.label} style={[styles.tile, { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText type="title" style={styles.tileValue}>
-                  {tile.value}
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {tile.label}
-                </ThemedText>
-              </View>
+            ).map((tile, index) => (
+              <StatTile key={tile.label} {...tile} index={index} />
             ))}
           </View>
 
@@ -235,28 +232,39 @@ export default function StatsScreen() {
               습관을 만들면 통계가 여기 표시돼요
             </ThemedText>
           ) : (
-            <FlatList
-              data={stats}
-              keyExtractor={(item) => item.habit.id}
-              contentContainerStyle={styles.list}
-              renderItem={({ item }) => (
-                <View style={[styles.row, { backgroundColor: theme.backgroundElement }]}>
-                  <View style={[styles.dot, { backgroundColor: item.habit.color }]} />
-                  <View style={styles.rowInfo}>
-                    <ThemedText style={styles.rowName}>
-                      {item.habit.icon} {item.habit.name}
-                    </ThemedText>
-                    <ThemedText themeColor="textSecondary" type="small">
-                      완료율 {item.completionRate}% · 🔥 {item.currentStreak} (최장 {item.longestStreak})
-                    </ThemedText>
-                  </View>
-                </View>
-              )}
-            />
+            <>
+              <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionTitle}>
+                최근 {LOOKBACK_DAYS}일
+              </ThemedText>
+              <View style={[styles.listCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+                {stats.map((item, index) => (
+                  <Animated.View
+                    key={item.habit.id}
+                    entering={FadeInDown.delay(index * 50).springify().damping(18)}
+                    style={[styles.row, index > 0 ? { borderTopWidth: 1, borderTopColor: theme.border } : null]}>
+                    <View style={[styles.rowIcon, { backgroundColor: item.habit.color }]}>
+                      <ThemedText style={styles.rowEmoji}>{item.habit.icon}</ThemedText>
+                    </View>
+                    <View style={styles.rowInfo}>
+                      <View style={styles.rowTop}>
+                        <ThemedText style={styles.rowName} numberOfLines={1}>
+                          {item.habit.name}
+                        </ThemedText>
+                        <ThemedText type="smallBold">{item.completionRate}%</ThemedText>
+                      </View>
+                      <ProgressBar progress={item.completionRate / 100} color={item.habit.color} delay={index * 50} />
+                      <ThemedText themeColor="textSecondary" type="small" style={styles.rowMeta}>
+                        🔥 현재 {item.currentStreak} · 최장 {item.longestStreak}
+                      </ThemedText>
+                    </View>
+                  </Animated.View>
+                ))}
+              </View>
+            </>
           )}
-        </>
+        </ScrollView>
       ) : (
-        <ScrollView contentContainerStyle={styles.scroll}>
+        <ScrollView contentContainerStyle={{ paddingBottom: tabBarSpace }} showsVerticalScrollIndicator={false}>
           {groups.length === 0 ? (
             <ThemedText themeColor="textSecondary">습관을 만들면 리포트가 여기 표시돼요</ThemedText>
           ) : mode === 'weekly' ? (
@@ -267,16 +275,25 @@ export default function StatsScreen() {
                     <ThemedText type="smallBold" themeColor="textSecondary" style={styles.groupTitle}>
                       {group.name}
                     </ThemedText>
-                    <View style={[styles.tableCard, { backgroundColor: theme.backgroundElement }]}>
+                    <View style={[styles.tableCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
                       <View style={styles.weekRow}>
                         <View style={styles.habitNameCol} />
-                        {WEEKDAY_LABELS.map((label) => (
-                          <View key={label} style={styles.dayCol}>
-                            <ThemedText type="small" themeColor="textSecondary">
-                              {label}
-                            </ThemedText>
-                          </View>
-                        ))}
+                        {weekDays.map((day, index) => {
+                          const isToday = format(day, 'yyyy-MM-dd') === today;
+                          return (
+                            <View key={WEEKDAY_LABELS[index]} style={styles.dayCol}>
+                              <ThemedText
+                                type="small"
+                                style={[
+                                  styles.weekdayHead,
+                                  { color: isToday ? theme.accent : theme.textSecondary },
+                                  isToday ? styles.weekdayHeadToday : null,
+                                ]}>
+                                {WEEKDAY_LABELS[index]}
+                              </ThemedText>
+                            </View>
+                          );
+                        })}
                       </View>
                       {group.items.map((habit) => {
                         const dates = checkedByHabit.get(habit.id) ?? new Set<string>();
@@ -295,7 +312,9 @@ export default function StatsScreen() {
                                   <View
                                     style={[
                                       styles.weeklyDot,
-                                      { backgroundColor: checked ? habit.color : theme.backgroundSelected },
+                                      checked
+                                        ? { backgroundColor: habit.color, boxShadow: `0px 2px 6px ${withAlpha(habit.color, 0.4)}` }
+                                        : { backgroundColor: theme.backgroundSelected },
                                     ]}
                                   />
                                 </View>
@@ -358,12 +377,48 @@ export default function StatsScreen() {
         </ScrollView>
       )}
 
-      {mode !== 'summary' && showJumpToToday ? (
-        <Pressable style={[styles.todayFab, { backgroundColor: theme.text }]} onPress={jumpToToday}>
-          <Ionicons name="today-outline" size={22} color={theme.background} />
-        </Pressable>
-      ) : null}
+      <JumpToTodayButton visible={mode !== 'summary' && showJumpToToday} onPress={jumpToToday} />
     </ThemedView>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  icon,
+  highlight,
+  index,
+}: {
+  label: string;
+  value: number;
+  icon: IoniconName;
+  highlight: boolean;
+  index: number;
+}) {
+  const theme = useTheme();
+  const display = useCountUp(value);
+  const fg = highlight ? theme.background : theme.text;
+  const fgMuted = highlight ? theme.background : theme.textSecondary;
+  return (
+    <Animated.View
+      entering={FadeInDown.delay(index * 60).springify().damping(18)}
+      style={[
+        styles.tile,
+        highlight
+          ? { backgroundColor: theme.text, borderColor: theme.text }
+          : { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+      ]}>
+      <View style={styles.tileTop}>
+        <Ionicons name={icon} size={16} color={fgMuted} />
+        <ThemedText type="small" style={{ color: fgMuted, opacity: highlight ? 0.8 : 1 }}>
+          {label}
+        </ThemedText>
+      </View>
+      <ThemedText style={[styles.tileValue, { color: fg }]}>
+        {display}
+        <ThemedText style={[styles.tileUnit, { color: fgMuted, opacity: highlight ? 0.7 : 1 }]}> 회</ThemedText>
+      </ThemedText>
+    </Animated.View>
   );
 }
 
@@ -376,6 +431,10 @@ interface MiniMonthCardProps {
 
 function MiniMonthCard({ habit, month, checkedDates, count }: MiniMonthCardProps) {
   const theme = useTheme();
+  const { width: windowWidth } = useWindowDimensions();
+  // Two cards per row inside 20pt screen padding + 10pt gap, 12pt card padding, 3pt cell gap.
+  const cardInner = (windowWidth - 40 - 10) / 2 - 24 - 2;
+  const cell = Math.max(8, Math.floor((cardInner - 3 * 6) / 7));
   const days = useMemo(() => {
     const start = startOfWeek(startOfMonth(month), { weekStartsOn: 0 });
     const end = endOfWeek(endOfMonth(month), { weekStartsOn: 0 });
@@ -383,7 +442,7 @@ function MiniMonthCard({ habit, month, checkedDates, count }: MiniMonthCardProps
   }, [month]);
 
   return (
-    <View style={[styles.miniCard, { backgroundColor: theme.backgroundElement }]}>
+    <View style={[styles.miniCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
       <View style={styles.miniCardHeader}>
         <ThemedText numberOfLines={1} type="small" style={styles.miniCardTitle}>
           {habit.icon} {habit.name}
@@ -402,6 +461,7 @@ function MiniMonthCard({ habit, month, checkedDates, count }: MiniMonthCardProps
               key={dateStr}
               style={[
                 styles.miniDay,
+                { width: cell, height: cell },
                 { backgroundColor: checked ? habit.color : theme.backgroundSelected, opacity: inMonth ? 1 : 0.3 },
               ]}
             />
@@ -426,7 +486,7 @@ function YearlyHeatmap({ habit, year, weeks, checkedDates, count }: YearlyHeatma
   const targetYear = year.getFullYear();
 
   return (
-    <View style={[styles.yearCard, { backgroundColor: theme.backgroundElement }]}>
+    <View style={[styles.yearCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
       <View style={styles.miniCardHeader}>
         <ThemedText numberOfLines={1} type="small" style={styles.miniCardTitle}>
           {habit.icon} {habit.name}
@@ -462,50 +522,43 @@ function YearlyHeatmap({ habit, year, weeks, checkedDates, count }: YearlyHeatma
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
+  container: { flex: 1, paddingHorizontal: 20 },
+  title: { fontSize: 34, lineHeight: 42, letterSpacing: -0.8 },
   empty: { marginTop: 24 },
-  segmentRow: { flexDirection: 'row', gap: 8, marginTop: 16, marginBottom: 16 },
-  segment: { paddingHorizontal: 14, paddingVertical: 8, borderRadius: 18 },
-  rangeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  tileRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
-  tile: { flex: 1, borderRadius: 16, paddingVertical: 14, alignItems: 'center', gap: 2 },
-  tileValue: { fontSize: 24, lineHeight: 28 },
-  list: { paddingBottom: 40, gap: 10 },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 12, borderRadius: 16, padding: 14 },
-  dot: { width: 10, height: 10, borderRadius: 5 },
-  rowInfo: { flex: 1, gap: 2 },
-  rowName: { fontWeight: '600' },
-  scroll: { paddingBottom: 40 },
+  segmentRow: { marginTop: 14, marginBottom: 16 },
+  rangeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 },
+  navButton: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  tileGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginBottom: 22 },
+  tile: { width: '48.5%', flexGrow: 1, borderRadius: 20, borderWidth: 1, padding: 14, gap: 8 },
+  tileTop: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  tileValue: { fontSize: 28, lineHeight: 34, fontFamily: 'NotoSansKR_700Bold', letterSpacing: -0.6 },
+  tileUnit: { fontSize: 14, fontFamily: 'NotoSansKR_500Medium' },
+  sectionTitle: { marginBottom: 8, marginLeft: 4 },
+  listCard: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 14 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 14 },
+  rowIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  rowEmoji: { fontSize: 19, lineHeight: 25 },
+  rowInfo: { flex: 1, gap: 6 },
+  rowTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rowName: { flex: 1, fontFamily: 'NotoSansKR_700Bold' },
+  rowMeta: { fontSize: 12, lineHeight: 16 },
   groupSection: { marginBottom: 20 },
-  groupTitle: { marginBottom: 8 },
-  tableCard: { borderRadius: 16, padding: 12, gap: 10 },
+  groupTitle: { marginBottom: 8, marginLeft: 4 },
+  tableCard: { borderRadius: 20, borderWidth: 1, padding: 14, gap: 12 },
   weekRow: { flexDirection: 'row', alignItems: 'center' },
   habitNameCol: { width: 90 },
   dayCol: { flex: 1, alignItems: 'center' },
-  weeklyDot: { width: 16, height: 16, borderRadius: 8 },
+  weekdayHead: { fontSize: 12 },
+  weekdayHeadToday: { fontFamily: 'NotoSansKR_700Bold' },
+  weeklyDot: { width: 20, height: 20, borderRadius: 7 },
   mosaicGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  miniCard: { width: '47%', borderRadius: 14, padding: 10 },
+  miniCard: { width: '48%', flexGrow: 1, borderRadius: 18, borderWidth: 1, padding: 12 },
   miniCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 6 },
   miniCardTitle: { flex: 1 },
   miniGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 3 },
-  miniDay: { width: 10, height: 10, borderRadius: 3 },
-  yearCard: { borderRadius: 14, padding: 10, marginBottom: 10 },
+  miniDay: { borderRadius: 4 },
+  yearCard: { borderRadius: 18, borderWidth: 1, padding: 12, marginBottom: 10 },
   heatmapRow: { flexDirection: 'row', gap: 3 },
   heatmapColumn: { gap: 3 },
-  heatCell: { width: 9, height: 9, borderRadius: 2 },
-  todayFab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
+  heatCell: { width: 9, height: 9, borderRadius: 2.5 },
 });

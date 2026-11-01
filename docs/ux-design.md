@@ -6,13 +6,13 @@
 ## 1. 디자인 컨셉
 
 - **한 줄 컨셉**: "캘린더에 쌓이는 색" — 습관 하나하나가 자기 색을 갖고, 체크인이 쌓일수록 캘린더/리포트에 그 색이 번져 보이는 것 자체가 성취의 시각적 증거가 되게 한다.
-- **시그니처 인터랙션(체크인)**: 오늘 화면 카드의 체크 원 탭 → scale-spring 애니메이션(1.0 → 1.2 → 1.0) → 카드 배경이 **습관 컬러 → 중립 회색(`backgroundElement`)** 으로 전환되고 체크마크가 채워짐. 이 색-회색 전환 자체가 "완료" 피드백이며 별도의 취소선/배너/컨페티는 아직 없다(→ [features.md](./features.md) 미구현 목록). 재탭(해제)은 단순히 원래 색으로 되돌아가며 확인 다이얼로그 없음(되돌리기 쉬움 원칙).
+- **시그니처 인터랙션(체크인)**: 오늘 화면 카드 오른쪽 체크 버튼 탭 → 버튼 pop(1.0 → 1.28 → 1.0) + 링 확산 + 작은 파티클 버스트 + 햅틱 → 카드 배경이 **습관 컬러 → 중립 서피스(`backgroundElement`)** 로 페이드(320ms)되고 체크 버튼은 습관 컬러로 채워짐(완료 후에도 습관 색 정체성 유지). 그날의 마지막 습관을 완료하면 컨페티 + "오늘 습관 모두 완료! 🎉" 토스트(`celebration.tsx`). 재탭(해제)은 원래 색으로 되돌아가며 확인 다이얼로그 없음(되돌리기 쉬움 원칙).
 - **컬러 철학**: 배경/구조는 다크 기준 무채색(`#15171A` 계열), 습관별로만 12색 팔레트 컬러를 카드 전체 배경(full-bleed)에 입혀 리스트 자체가 다채로워 보이게 한다 — 배경/구조가 아니라 "카드 전체"가 색을 갖는 것이 DayStamps 대비 핵심 차용 포인트.
 - **접근성 라벨**: 체크 원에 `"{습관명}, {완료/미완료}, 두 번 탭하여 완료 표시"` 형태의 명시적 accessibilityLabel 부여(색만으로 상태를 전달하지 않음) — `habit-card.tsx` 구현.
 
 ## 2. 정보 구조 / 네비게이션 (실제 구현)
 
-하단 탭 4개: `[오늘] [캘린더] [통계] [설정]`
+하단 탭 4개: `[오늘] [캘린더] [통계] [설정]` — 2026-11 리디자인부터 화면 하단에 떠 있는 **반투명 pill 탭 바**(`floating-tab-bar.tsx`, 웹은 backdrop blur)와 그 옆의 원형 **`+`(새 습관)** 버튼. 활성 탭 배경 pill이 스프링으로 이동하고, 탭 전환 시 화면은 `shift` 애니메이션. 탭 화면 스크롤 콘텐츠는 바 밑으로 흐르며, `useTabBarSpace()`만큼 하단 여백을 둔다. 바는 홈 인디케이터 영역에 일부 겹쳐 앉는다(`useTabBarBottomOffset()` = inset − 14) — 예전 풀폭 탭 바 아래 34pt 빈 띠가 "하단 빈 공간이 너무 크다"는 피드백의 원인이었다.
 
 - **오늘**(`(tabs)/index.tsx`): 기본 진입 화면.
 - **캘린더**(`(tabs)/calendar.tsx`): 전체 습관 통합 월간 뷰.
@@ -25,11 +25,11 @@
 
 ### 3-1. 오늘 화면(홈) — `(tabs)/index.tsx`
 
-- 헤더: `{M월 d일} {WED 등 영문 요일 배지}` — **날짜 텍스트를 탭하면 날짜 선택 모달(§3-6)이 열려 10일 스트립 범위 밖의 날짜로도 이동 가능**. 우측에 리포트 진입 아이콘(막대그래프) + 습관 추가 아이콘.
-- 10일 날짜 스트립: 오늘 기준 이전 9일~오늘, 가로 스크롤 없이 고정 폭 배치, 선택된 날짜만 테두리 강조.
+- 헤더: 작은 날짜 줄(`M월 d일 요일 ▾`) + 큰 제목(`오늘`/`어제`/`M월 d일`). **날짜 줄이나 우측 캘린더 버튼을 탭하면 날짜 선택 모달(§3-6)**. (예전 헤더의 통계/추가 아이콘과 `+` FAB는 탭 바로 통합되어 제거.)
+- 10일 날짜 스트립: 선택된 날은 반전(채움) pill, 오늘은 숫자 아래 accent 점.
+- 진행 카드: `완료/전체`, 상황별 문구, 스프링으로 차오르는 진행 바.
 - 습관 리스트는 **카테고리(그룹)별로 접기/펼치기 가능한 섹션**으로 분리(그룹 없는 습관은 "기본" 섹션). 섹션 헤더에 그룹별 진행률(`완료/전체`) 배지.
-- 습관 카드(`HabitCard`, §1 참고): 아이콘+이름, 서브텍스트(마지막 체크인 상대 시각), 기간 진행률 배지(`count/target` — 주간 또는 "월 n회" 습관은 월간 기준), 카드 전체가 `Link`로 습관 상세로 이동.
-- 하단 우측 `+` FAB → 습관 추가.
+- 습관 카드(`HabitCard`, §1 참고): 아이콘 타일+이름, 메타 줄(기간 진행률 칩 `count/target` — 주간 또는 "월 n회" 습관은 월간 기준, 스트릭 🔥n(2 이상일 때), 마지막 체크인 상대 시각), 오른쪽 체크 버튼. 카드 탭 → 습관 상세(누르는 동안 살짝 줄어드는 press-scale).
 
 ### 3-2. 습관 추가/수정 — `habit/new.tsx`, `habit/[id]/edit.tsx` (공용 `habit-form.tsx`)
 
@@ -106,7 +106,10 @@ DayStamps의 "New Activity" 폼을 참조해 구현:
 
 | 인터랙션 | 구현 |
 |---|---|
-| 체크인 토글 애니메이션 | `react-native-reanimated`(`withSequence(withSpring)` scale) + `expo-haptics` light impact |
+| 체크인 토글 애니메이션 | `react-native-reanimated` — 버튼 pop, 링/파티클 버스트, `interpolateColor` 카드 배경 페이드 |
+| 햅틱 | `lib/haptics.ts`(네이티브: expo-haptics) / `lib/haptics.web.ts`(iOS 18+ PWA: `<input type="checkbox" switch>` 라벨 클릭 트릭, 안드로이드: Vibration API). **iOS 웹 트릭은 사용자 제스처 안에서 동기적으로 불러야만 동작** — `await` 뒤에서 부르면 무시된다 |
+| 공용 탭 피드백 | `components/ui/pressable-scale.tsx`(누르는 동안 스프링 축소, 선택적 햅틱), `segmented-control.tsx`(썸이 스프링으로 이동), `progress-bar.tsx`, `hooks/use-count-up.ts`(통계 숫자 롤링) |
+| 진입 애니메이션 | 리스트/카드에 Reanimated `FadeInDown.springify()` 스태거 |
 | 월/주/연 스와이프 이동 | 자체 `useSwipeNavigation` 훅(`hooks/use-swipe-navigation.ts`) — 순수 RN `PanResponder` 기반. `react-native-gesture-handler`의 `GestureDetector`/`GestureHandlerRootView` 설정이 필요 없어 채택. `dx`가 `dy*1.5`보다 크고 ±50px 이상일 때만 스와이프로 판정 |
 | `<Link asChild>` + 배열 스타일 | `expo-router`의 Slot 구현은 자식의 `style`이 배열이면 런타임 에러를 던진다. FAB/카드처럼 `Link asChild` 안의 `Pressable`에 배열 스타일을 줄 때는 반드시 `StyleSheet.flatten([...])`로 감싼다(`habit-card.tsx` 참고) |
 
@@ -118,5 +121,5 @@ DayStamps의 "New Activity" 폼을 참조해 구현:
 
 ## 7. 알려진 갭 (다음에 다듬을 것)
 
-- 체크인 완료 시 컨페티/축하 배너 등 초기 계획에 있던 연출은 아직 없다(scale-spring 전환만 구현).
+- iOS 홈 화면 PWA 하단 여백: `+html.tsx`의 viewport-fit 스크립트가 standalone + translucent 상태바 + `innerHeight < screen.height`(차이 ≤ 80px)일 때만 앱 셸 높이를 `screen.height`로 고정한다. 실기기에서만 재현되는 문제라 설정 화면 맨 아래에 측정값 진단 줄(`viewport a/b · top n · fit 적용/없음`)을 남겨뒀다 — 여백이 다시 보이면 이 값부터 확인.
 - 습관 카드에서 롱프레스 메뉴(메모/스킵/수정/삭제)는 미구현 — 현재 수정/삭제는 상세 화면 진입 후에만 가능.

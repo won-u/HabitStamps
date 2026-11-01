@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { addMonths, eachDayOfInterval, endOfMonth, format, getDay, isSameMonth, startOfMonth, subMonths } from 'date-fns';
+import { eachDayOfInterval, endOfMonth, format, getDay, getDaysInMonth, isSameMonth, startOfMonth } from 'date-fns';
+import { ko } from 'date-fns/locale';
 import { Ionicons } from '@expo/vector-icons';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import type { CheckIn, Habit } from '@habit-tracker/core';
 
 import { ThemedText } from '@/components/themed-text';
@@ -12,6 +14,11 @@ import { useMonthSlideCarousel } from '@/hooks/use-month-slide-carousel';
 import { MonthSlideTrack } from '@/components/month-slide-track';
 import { YearMonthPickerModal } from '@/components/year-month-picker-modal';
 import { habitRepository, checkInRepository } from '@/composition/container';
+import { PressableScale } from '@/components/ui/pressable-scale';
+import { ProgressBar } from '@/components/ui/progress-bar';
+import { JumpToTodayButton } from '@/components/ui/jump-to-today-button';
+import { useTabBarSpace } from '@/hooks/use-bottom-inset';
+import { haptic } from '@/lib/haptics';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const GRID_GAP = 6;
@@ -30,6 +37,7 @@ export default function CalendarScreen() {
   const [allCheckIns, setAllCheckIns] = useState<readonly CheckIn[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [pickerVisible, setPickerVisible] = useState(false);
+  const tabBarSpace = useTabBarSpace();
 
   useEffect(() => habitRepository.observe().subscribe(setHabits), []);
   // observeAll (not per-day listByDate calls) so a check-in made from any other
@@ -73,18 +81,38 @@ export default function CalendarScreen() {
   const { prevMonth, nextMonth, viewportHeight, panGesture, carouselTrackStyle, goToMonth, resetToMonth } =
     useMonthSlideCarousel({ month, setMonth, containerWidth, rowHeight: cellSize, rowGap: GRID_GAP, maxRows: MAX_WEEK_ROWS });
 
+  const daysInMonth = getDaysInMonth(month);
+
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top + CONTAINER_PADDING }]}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 12 }]}>
       <View style={styles.monthHeader}>
-        <Pressable onPress={() => goToMonth(-1)} hitSlop={8}>
-          <Ionicons name="chevron-back" size={22} color={theme.text} />
+        <Pressable onPress={() => setPickerVisible(true)} hitSlop={8} style={styles.monthTitle}>
+          <ThemedText type="smallBold" themeColor="textSecondary">
+            {format(month, 'yyyy년')}
+          </ThemedText>
+          <View style={styles.monthTitleRow}>
+            <ThemedText type="title" style={styles.monthTitleText}>
+              {format(month, 'M월')}
+            </ThemedText>
+            <Ionicons name="chevron-down" size={18} color={theme.textSecondary} />
+          </View>
         </Pressable>
-        <Pressable onPress={() => setPickerVisible(true)} hitSlop={8}>
-          <ThemedText type="subtitle">{format(month, 'yyyy년 M월')}</ThemedText>
-        </Pressable>
-        <Pressable onPress={() => goToMonth(1)} hitSlop={8}>
-          <Ionicons name="chevron-forward" size={22} color={theme.text} />
-        </Pressable>
+        <View style={styles.monthNav}>
+          <PressableScale
+            hapticKind="selection"
+            accessibilityLabel="이전 달"
+            onPress={() => goToMonth(-1)}
+            style={[styles.navButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <Ionicons name="chevron-back" size={18} color={theme.text} />
+          </PressableScale>
+          <PressableScale
+            hapticKind="selection"
+            accessibilityLabel="다음 달"
+            onPress={() => goToMonth(1)}
+            style={[styles.navButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <Ionicons name="chevron-forward" size={18} color={theme.text} />
+          </PressableScale>
+        </View>
       </View>
 
       <YearMonthPickerModal
@@ -95,14 +123,18 @@ export default function CalendarScreen() {
         onSelect={(year, monthIndex) => resetToMonth(new Date(year, monthIndex, 1))}
       />
 
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: tabBarSpace }]}
+        showsVerticalScrollIndicator={false}>
         <View style={styles.weekdayRow}>
-          {WEEKDAY_LABELS.map((label) => (
+          {WEEKDAY_LABELS.map((label, index) => (
             <ThemedText
               key={label}
               type="small"
-              themeColor="textSecondary"
-              style={[styles.weekdayLabel, { width: cellSize }]}>
+              style={[
+                styles.weekdayLabel,
+                { width: cellSize, color: index === 0 ? theme.danger : theme.textSecondary },
+              ]}>
               {label}
             </ThemedText>
           ))}
@@ -120,59 +152,92 @@ export default function CalendarScreen() {
               habitById={habitById}
               allCheckIns={allCheckIns}
               selectedDate={selectedDate}
-              onSelectDate={setSelectedDate}
+              onSelectDate={(date) => {
+                haptic('selection');
+                setSelectedDate((prev) => (prev === date ? null : date));
+              }}
               theme={theme}
             />
           )}
         />
 
         {selectedDate ? (
-          <View style={[styles.detail, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">{selectedDate}</ThemedText>
+          <Animated.View
+            key={selectedDate}
+            entering={FadeInDown.springify().damping(18)}
+            style={[styles.detail, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <View style={styles.detailHeader}>
+              <ThemedText type="smallBold">{format(new Date(selectedDate), 'M월 d일 EEEE', { locale: ko })}</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                {selectedCheckIns.length}개 완료
+              </ThemedText>
+            </View>
             {selectedCheckIns.length === 0 ? (
-              <ThemedText themeColor="textSecondary">기록 없음</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                기록 없음
+              </ThemedText>
             ) : (
               selectedCheckIns.map((checkIn) => {
                 const habit = habitById.get(checkIn.habitId);
                 return (
-                  <ThemedText key={checkIn.id}>
-                    {habit?.icon} {habit?.name}
-                    {checkIn.note ? ` — ${checkIn.note}` : ''}
-                  </ThemedText>
+                  <View key={checkIn.id} style={styles.detailRow}>
+                    <View style={[styles.detailIcon, { backgroundColor: habit?.color ?? theme.backgroundSelected }]}>
+                      <ThemedText style={styles.detailEmoji}>{habit?.icon}</ThemedText>
+                    </View>
+                    <View style={styles.detailInfo}>
+                      <ThemedText numberOfLines={1}>{habit?.name}</ThemedText>
+                      {checkIn.note ? (
+                        <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                          {checkIn.note}
+                        </ThemedText>
+                      ) : null}
+                    </View>
+                  </View>
                 );
               })
             )}
-          </View>
+          </Animated.View>
         ) : null}
 
         {habits.length > 0 ? (
           <View style={styles.monthlyCounts}>
             <ThemedText type="smallBold" themeColor="textSecondary" style={styles.monthlyCountsTitle}>
-              {format(month, 'M월')} 습관별 카운트
+              {format(month, 'M월')} 습관별 기록
             </ThemedText>
-            {habits.map((habit) => (
-              <View key={habit.id} style={[styles.countRow, { backgroundColor: theme.backgroundElement }]}>
-                <View style={[styles.countDot, { backgroundColor: habit.color }]} />
-                <ThemedText style={styles.countName} numberOfLines={1}>
-                  {habit.icon} {habit.name}
-                </ThemedText>
-                <ThemedText themeColor="textSecondary">{monthlyCountByHabit.get(habit.id) ?? 0}회</ThemedText>
-              </View>
-            ))}
+            <View style={[styles.countCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              {habits.map((habit, index) => {
+                const count = monthlyCountByHabit.get(habit.id) ?? 0;
+                return (
+                  <View
+                    key={habit.id}
+                    style={[styles.countRow, index > 0 ? { borderTopColor: theme.border, borderTopWidth: 1 } : null]}>
+                    <View style={styles.countTop}>
+                      <ThemedText style={styles.countName} numberOfLines={1}>
+                        {habit.icon} {habit.name}
+                      </ThemedText>
+                      <ThemedText type="smallBold">
+                        {count}
+                        <ThemedText type="small" themeColor="textSecondary">
+                          회
+                        </ThemedText>
+                      </ThemedText>
+                    </View>
+                    <ProgressBar progress={count / daysInMonth} color={habit.color} delay={index * 40} />
+                  </View>
+                );
+              })}
+            </View>
           </View>
         ) : null}
       </ScrollView>
 
-      {isCurrentMonth ? null : (
-        <Pressable
-          style={[styles.todayFab, { backgroundColor: theme.text }]}
-          onPress={() => {
-            resetToMonth(new Date());
-            setSelectedDate(null);
-          }}>
-          <Ionicons name="today-outline" size={22} color={theme.background} />
-        </Pressable>
-      )}
+      <JumpToTodayButton
+        visible={!isCurrentMonth}
+        onPress={() => {
+          resetToMonth(new Date());
+          setSelectedDate(null);
+        }}
+      />
     </ThemedView>
   );
 }
@@ -212,6 +277,7 @@ function MonthGrid({
     }
     return map;
   }, [days, allCheckIns]);
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
 
   return (
     <View style={styles.grid}>
@@ -225,26 +291,40 @@ function MonthGrid({
           .map((checkIn) => habitById.get(checkIn.habitId)?.color)
           .filter((color): color is string => Boolean(color));
 
+        const isSelected = selectedDate === dateStr;
+        const isToday = dateStr === todayStr;
         return (
-          <Pressable
+          <PressableScale
             key={dateStr}
+            activeScale={0.9}
             onPress={() => onSelectDate(dateStr)}
             style={[
               styles.dayCell,
               {
                 width: cellSize,
                 height: cellSize,
-                backgroundColor: theme.backgroundElement,
-                borderColor: selectedDate === dateStr ? theme.text : 'transparent',
+                backgroundColor: isSelected ? theme.text : theme.backgroundElement,
+                borderColor: isToday && !isSelected ? theme.accent : isSelected ? theme.text : theme.border,
+                borderWidth: isToday && !isSelected ? 1.5 : 1,
               },
             ]}>
-            <ThemedText type="small">{format(day, 'd')}</ThemedText>
+            <ThemedText
+              type="small"
+              style={[
+                styles.dayNumber,
+                { color: isSelected ? theme.background : isToday ? theme.accent : theme.text },
+              ]}>
+              {format(day, 'd')}
+            </ThemedText>
             <View style={styles.dotsRow}>
               {dotColors.slice(0, 4).map((color, index) => (
-                <View key={index} style={[styles.dot, { backgroundColor: color }]} />
+                <View
+                  key={index}
+                  style={[styles.dot, { backgroundColor: color }, isSelected ? { borderWidth: 1, borderColor: theme.background } : null]}
+                />
               ))}
             </View>
-          </Pressable>
+          </PressableScale>
         );
       })}
     </View>
@@ -252,43 +332,39 @@ function MonthGrid({
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
-  monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  scroll: { paddingBottom: 40 },
+  container: { flex: 1, paddingHorizontal: CONTAINER_PADDING },
+  monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 18 },
+  monthTitle: { gap: 2 },
+  monthTitleRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  monthTitleText: { fontSize: 34, lineHeight: 42, letterSpacing: -0.8 },
+  monthNav: { flexDirection: 'row', gap: 8, marginBottom: 2 },
+  navButton: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  scroll: {},
   weekdayRow: { flexDirection: 'row', gap: GRID_GAP, marginBottom: 8 },
-  weekdayLabel: { textAlign: 'center' },
+  weekdayLabel: { textAlign: 'center', fontSize: 12 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: GRID_GAP, alignContent: 'flex-start' },
   dayCell: {
-    borderRadius: 10,
-    borderWidth: 1.5,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 4,
+    gap: 3,
   },
+  dayNumber: { fontFamily: 'NotoSansKR_700Bold', fontSize: 13.5 },
   // Fixed height (not auto) so the day number sits at the same vertical spot
   // whether or not this day has check-in dots — an empty row would otherwise
   // collapse to 0 height and shift the number down relative to days with dots.
   dotsRow: { flexDirection: 'row', gap: 2, height: 6 },
-  dot: { width: 5, height: 5, borderRadius: 2.5 },
-  detail: { marginTop: 16, borderRadius: 14, padding: 16, gap: 4 },
-  monthlyCounts: { marginTop: 20, gap: 8 },
-  monthlyCountsTitle: { marginBottom: 4 },
-  countRow: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12 },
-  countDot: { width: 8, height: 8, borderRadius: 4 },
+  dot: { width: 6, height: 6, borderRadius: 3 },
+  detail: { marginTop: 16, borderRadius: 20, borderWidth: 1, padding: 16, gap: 10 },
+  detailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  detailRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  detailIcon: { width: 32, height: 32, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
+  detailEmoji: { fontSize: 16, lineHeight: 22 },
+  detailInfo: { flex: 1 },
+  monthlyCounts: { marginTop: 24 },
+  monthlyCountsTitle: { marginBottom: 8, marginLeft: 4 },
+  countCard: { borderRadius: 20, borderWidth: 1, paddingHorizontal: 16 },
+  countRow: { paddingVertical: 12, gap: 8 },
+  countTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   countName: { flex: 1 },
-  todayFab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
 });

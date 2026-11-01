@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ScrollView, StyleSheet, View } from 'react-native';
 import { Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { Category, Habit } from '@habit-tracker/core';
@@ -7,6 +7,7 @@ import type { Category, Habit } from '@habit-tracker/core';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { habitRepository, categoryRepository } from '@/composition/container';
 
 export default function ArchiveScreen() {
@@ -32,19 +33,20 @@ export default function ArchiveScreen() {
           <ThemedText themeColor="textSecondary">보관된 습관이 없어요</ThemedText>
         ) : (
           archivedHabits.map((habit) => (
-            <View key={habit.id} style={[styles.row, { backgroundColor: theme.backgroundElement }]}>
+            <View key={habit.id} style={[styles.row, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+              <View style={[styles.icon, { backgroundColor: habit.color }]}>
+                <ThemedText style={styles.emoji}>{habit.icon}</ThemedText>
+              </View>
               <View style={styles.info}>
-                <ThemedText numberOfLines={1}>
-                  {habit.icon} {habit.name}
-                </ThemedText>
+                <ThemedText numberOfLines={1}>{habit.name}</ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
                   {habit.categoryId ? (categoryById.get(habit.categoryId)?.name ?? '기본') : '기본'}
                 </ThemedText>
               </View>
-              <Pressable onPress={() => handleRestore(habit)} style={[styles.restoreButton, { borderColor: theme.text }]}>
+              <PressableScale hapticKind="light" onPress={() => handleRestore(habit)} style={[styles.restoreButton, { borderColor: theme.border, backgroundColor: theme.backgroundSelected }]}>
                 <Ionicons name="arrow-undo-outline" size={16} color={theme.text} />
-                <ThemedText>복구</ThemedText>
-              </Pressable>
+                <ThemedText type="smallBold">복구</ThemedText>
+              </PressableScale>
             </View>
           ))
         )}
@@ -56,7 +58,9 @@ export default function ArchiveScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   scroll: { padding: 20, gap: 10 },
-  row: { flexDirection: 'row', alignItems: 'center', borderRadius: 16, padding: 14, gap: 12 },
+  row: { flexDirection: 'row', alignItems: 'center', borderRadius: 20, borderWidth: 1, padding: 12, gap: 12 },
+  icon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  emoji: { fontSize: 19, lineHeight: 25 },
   info: { flex: 1, gap: 2 },
   restoreButton: {
     flexDirection: 'row',

@@ -12,19 +12,33 @@ import { Platform } from 'react-native';
 // ThemedText/ThemedView usages don't need to change.
 export const Colors = {
   light: {
-    text: '#17171C',
-    background: '#F9F8F6',
+    text: '#15161B',
+    // Cool off-white (iOS grouped-background family) so pure-white cards
+    // actually lift off the page instead of blending into a warm beige.
+    background: '#F2F3F7',
     backgroundElement: '#FFFFFF',
-    backgroundSelected: '#E7E6E9',
-    textSecondary: '#6E6E76',
+    backgroundSelected: '#E6E7EE',
+    textSecondary: '#6B6D78',
+    accent: '#5B5FE8',
+    danger: '#E5484D',
+    border: 'rgba(21,22,27,0.07)',
+    /** Translucent fill for floating chrome (tab bar) — paired with a backdrop blur on web. */
+    chrome: 'rgba(255,255,255,0.78)',
+    /** Selected-segment thumb — must read as *raised* against `backgroundSelected`. */
+    segmentThumb: '#FFFFFF',
   },
   dark: {
     // A hair of blue in the near-black (not flat gray) reads less "default dark mode".
-    text: '#F3F3F5',
-    background: '#111217',
-    backgroundElement: '#1B1D24',
-    backgroundSelected: '#272A33',
-    textSecondary: '#95969E',
+    text: '#F3F3F6',
+    background: '#0D0E12',
+    backgroundElement: '#191B22',
+    backgroundSelected: '#262933',
+    textSecondary: '#9497A3',
+    accent: '#8A8DFF',
+    danger: '#FF6369',
+    border: 'rgba(255,255,255,0.07)',
+    chrome: 'rgba(28,30,38,0.78)',
+    segmentThumb: '#3A3E4B',
   },
 } as const;
 
@@ -86,5 +100,31 @@ export const Spacing = {
   six: 64,
 } as const;
 
-export const BottomTabInset = Platform.select({ ios: 50, android: 80 }) ?? 0;
 export const MaxContentWidth = 800;
+
+export const Radius = {
+  sm: 10,
+  md: 14,
+  lg: 20,
+  xl: 26,
+  pill: 999,
+} as const;
+
+/** Soft, layered elevation — `boxShadow` is supported by both RN (new arch) and react-native-web. */
+export const Shadows = {
+  card: '0px 1px 2px rgba(16,18,27,0.04), 0px 6px 16px rgba(16,18,27,0.06)',
+  floating: '0px 2px 6px rgba(16,18,27,0.08), 0px 14px 36px rgba(16,18,27,0.16)',
+} as const;
+
+/** Tinted glow under a colored element (e.g. a habit card) — `color` is a #RRGGBB hex. */
+export function tintedShadow(color: string, alpha = 0.32): string {
+  return `0px 8px 20px ${withAlpha(color, alpha)}`;
+}
+
+/** `#RRGGBB` + 0–1 alpha → `rgba(...)`. Leaves non-hex input untouched. */
+export function withAlpha(hex: string, alpha: number): string {
+  const match = /^#([0-9a-f]{6})$/i.exec(hex);
+  if (!match) return hex;
+  const value = parseInt(match[1]!, 16);
+  return `rgba(${(value >> 16) & 255},${(value >> 8) & 255},${value & 255},${alpha})`;
+}

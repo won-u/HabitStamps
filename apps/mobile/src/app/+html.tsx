@@ -27,8 +27,8 @@ export default function Root({ children }: PropsWithChildren) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="습관 트래커" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="theme-color" content="#F9F8F6" media="(prefers-color-scheme: light)" />
-        <meta name="theme-color" content="#111217" media="(prefers-color-scheme: dark)" />
+        <meta name="theme-color" content="#F2F3F7" media="(prefers-color-scheme: light)" />
+        <meta name="theme-color" content="#0D0E12" media="(prefers-color-scheme: dark)" />
 
         <ScrollViewStyleReset />
 
@@ -41,8 +41,15 @@ export default function Root({ children }: PropsWithChildren) {
           // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{
             __html: `
-              body { background-color: #F9F8F6; }
-              @media (prefers-color-scheme: dark) { body { background-color: #111217; } }
+              html, body { background-color: #F2F3F7; }
+              @media (prefers-color-scheme: dark) { html, body { background-color: #0D0E12; } }
+
+              /* 아래 fit 스크립트가 측정한 실제 화면 높이(있을 때만)로 앱 셸
+                 높이를 고정한다 — 값이 없으면 Expo 기본 리셋(100%) 그대로. */
+              html.app-height-fix, html.app-height-fix body, html.app-height-fix #root {
+                height: var(--app-height);
+                overflow: hidden;
+              }
 
               /* iOS Safari의 롱프레스 링크 미리보기(callout)를 앱 전체에서
                  끈다 — 습관 카드가 상세 화면으로 가는 Link(<a>)라서, 길게
@@ -60,6 +67,63 @@ export default function Root({ children }: PropsWithChildren) {
                 -webkit-user-select: none;
                 user-select: none;
               }
+            `,
+          }}
+        />
+
+        {/* iOS 홈 화면 PWA(standalone, black-translucent)에서 하단 여백 버그
+            우회. 이 모드에선 웹뷰가 상태바 밑까지 화면 전체를 덮으므로 레이아웃
+            뷰포트 높이 == screen.height여야 하는데, 실기기에서 그보다 짧게
+            잡혀(=#root가 화면 끝까지 안 닿아) 남는 부분이 탭 바 아래 빈
+            띠로 보이는 증상이 반복 보고됐다(git log: bc85802, 53b3dd0,
+            bbb6871). 탭 바 패딩을 아무리 줄여도 안 고쳐진 이유가 이것 —
+            빈 공간이 앱 바깥(body)이었기 때문.
+            조건을 좁게 건다: standalone + 세로 + 상단 safe-area > 0(상태바
+            밑까지 그려지는 translucent 모드라는 증거) + 측정 높이가
+            screen.height보다 작고 그 차이가 상태바 높이 수준(≤ 80px)일 때만
+            screen.height로 늘린다. 그 외엔 아무것도 건드리지 않는다.
+            측정값은 설정 화면 맨 아래 진단 줄에서 볼 수 있다. */}
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function () {
+                var nav = window.navigator;
+                var standalone = nav.standalone === true ||
+                  (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+                if (!standalone) return;
+                var probe;
+                function safeTop() {
+                  if (!probe) {
+                    probe = document.createElement('div');
+                    probe.style.cssText = 'position:fixed;top:0;left:0;width:0;visibility:hidden;pointer-events:none;padding-top:env(safe-area-inset-top);';
+                    document.documentElement.appendChild(probe);
+                  }
+                  return parseFloat(getComputedStyle(probe).paddingTop) || 0;
+                }
+                function fit() {
+                  var root = document.documentElement;
+                  var portrait = window.innerWidth < window.innerHeight;
+                  var measured = window.innerHeight;
+                  var full = Math.max(screen.width, screen.height);
+                  var gap = full - measured;
+                  var info = { innerHeight: measured, screenHeight: full, safeTop: safeTop(), applied: false };
+                  if (portrait && info.safeTop > 0 && gap > 0 && gap <= 80) {
+                    root.style.setProperty('--app-height', full + 'px');
+                    root.classList.add('app-height-fix');
+                    info.applied = true;
+                  } else {
+                    root.classList.remove('app-height-fix');
+                    root.style.removeProperty('--app-height');
+                  }
+                  window.__viewportFit = info;
+                }
+                fit();
+                window.addEventListener('resize', fit);
+                window.addEventListener('orientationchange', function () { setTimeout(fit, 300); });
+                window.addEventListener('pageshow', fit);
+                document.addEventListener('DOMContentLoaded', fit);
+              })();
             `,
           }}
         />

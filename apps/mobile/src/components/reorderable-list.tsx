@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { View } from 'react-native';
 import { Gesture, GestureDetector, type PanGesture } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
+import { haptic } from '@/lib/haptics';
 
 const LONG_PRESS_DURATION_MS = 350;
 const DEFAULT_ROW_HEIGHT = 60;
@@ -299,7 +299,7 @@ function DraggableRow<T>({
   function handleStart() {
     dragStartOffsetY.value = currentOffsetYShared.value;
     onDragStartShared.value.fn();
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    haptic('medium');
   }
 
   function handleUpdate(translationY: number) {

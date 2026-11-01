@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Platform, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { useTheme } from '@/hooks/use-theme';
+import { PressableScale } from '@/components/ui/pressable-scale';
 import { getConfiguredSupabaseClient } from '@/composition/container';
 
 type State = { kind: 'loading' } | { kind: 'none' } | { kind: 'made'; at: string } | { kind: 'unavailable' };
@@ -78,7 +79,7 @@ export function ExportTokenSection() {
 
   return (
     <View>
-      <ThemedText themeColor="textSecondary" style={styles.hint}>
+      <ThemedText type="small" themeColor="textSecondary" style={styles.hint}>
         다른 앱(예: Personal Hermes)이 내 습관과 도장을 읽기만 할 수 있게 하는 키예요. 쓰기·삭제는 할 수 없어요.
         {state.kind === 'made' ? ` 지금 키: ${new Date(state.at).toLocaleDateString()}에 만듦.` : ''}
       </ThemedText>
@@ -94,21 +95,21 @@ export function ExportTokenSection() {
             이 키는 지금 한 번만 보여요. 길게 눌러 복사해서 연동할 앱에 넣어 주세요.
           </ThemedText>
           {Platform.OS === 'web' ? (
-            <Pressable onPress={copy} style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+            <PressableScale hapticKind="light" onPress={copy} style={[styles.button, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
               <ThemedText>{copied ? '복사했어요' : '복사'}</ThemedText>
-            </Pressable>
+            </PressableScale>
           ) : null}
         </View>
       ) : null}
-      <Pressable onPress={make} style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
+      <PressableScale hapticKind="light" onPress={make} style={[styles.button, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
         <ThemedText>{state.kind === 'made' ? '새 연동 키 만들기 (이전 키는 끊겨요)' : '연동 키 만들기'}</ThemedText>
-      </Pressable>
+      </PressableScale>
       {state.kind === 'made' ? (
-        <Pressable onPress={revoke} style={[styles.button, { backgroundColor: theme.backgroundElement }]}>
-          <ThemedText style={{ color: '#E85D75' }}>연동 끊기</ThemedText>
-        </Pressable>
+        <PressableScale hapticKind="light" onPress={revoke} style={[styles.button, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+          <ThemedText style={{ color: theme.danger }}>연동 끊기</ThemedText>
+        </PressableScale>
       ) : null}
-      {error ? <ThemedText style={[styles.hint, { color: '#E85D75' }]}>{error}</ThemedText> : null}
+      {error ? <ThemedText style={[styles.hint, { color: theme.danger }]}>{error}</ThemedText> : null}
     </View>
   );
 }
@@ -116,6 +117,6 @@ export function ExportTokenSection() {
 const styles = StyleSheet.create({
   hint: { marginTop: 8 },
   tokenBox: { marginTop: 12, gap: 6 },
-  token: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: 13 },
-  button: { marginTop: 12, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  token: { borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }), fontSize: 13 },
+  button: { marginTop: 10, paddingVertical: 14, borderRadius: 16, borderWidth: 1, alignItems: 'center' },
 });

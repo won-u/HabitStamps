@@ -2,9 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Link } from 'expo-router';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { format, subDays } from 'date-fns';
+import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
+import { differenceInCalendarDays, format, subDays } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import type { Category } from '@habit-tracker/core';
 
@@ -13,6 +14,11 @@ import { ThemedView } from '@/components/themed-view';
 import { HabitCard } from '@/components/habit-card';
 import { DatePickerModal } from '@/components/date-picker-modal';
 import { ReorderableList, wasDragJustEnded } from '@/components/reorderable-list';
+import { Celebration } from '@/components/celebration';
+import { PressableScale } from '@/components/ui/pressable-scale';
+import { ProgressBar } from '@/components/ui/progress-bar';
+import { useTabBarSpace } from '@/hooks/use-bottom-inset';
+import { haptic } from '@/lib/haptics';
 import { useTheme } from '@/hooks/use-theme';
 import { useToday, type TodayHabit } from '@/features/today/use-today';
 import { categoryRepository, habitRepository } from '@/composition/container';
@@ -34,6 +40,8 @@ export default function TodayScreen() {
   const [categories, setCategories] = useState<readonly Category[]>([]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [datePickerVisible, setDatePickerVisible] = useState(false);
+  const [celebration, setCelebration] = useState(0);
+  const tabBarSpace = useTabBarSpace();
   const stripRef = useRef<ScrollView>(null);
   const defaultGroupSortOrder = useSettingsStore((state) => state.defaultGroupSortOrder);
   const setDefaultGroupSortOrder = useSettingsStore((state) => state.setDefaultGroupSortOrder);
@@ -146,31 +154,40 @@ export default function TodayScreen() {
 
   const viewedDateObj = new Date(viewedDate);
   const completedCount = items.filter((item) => item.isCheckedForViewedDate).length;
+  const progress = items.length > 0 ? completedCount / items.length : 0;
+  const dayDiff = differenceInCalendarDays(new Date(today), viewedDateObj);
+  const title = dayDiff === 0 ? '오늘' : dayDiff === 1 ? '어제' : format(viewedDateObj, 'M월 d일', { locale: ko });
+
+  async function handleToggle(item: TodayHabit) {
+    const completesDay = !item.isCheckedForViewedDate && completedCount + 1 === items.length;
+    await toggleCheckIn(item.habit);
+    if (completesDay) {
+      haptic('success');
+      setCelebration((n) => n + 1);
+    }
+  }
 
   return (
-    <ThemedView style={[styles.container, { paddingTop: insets.top + 20 }]}>
+    <ThemedView style={[styles.container, { paddingTop: insets.top + 12 }]}>
       <View style={styles.headerRow}>
-        <Pressable style={styles.headerDate} onPress={() => setDatePickerVisible(true)} hitSlop={8}>
-          <ThemedText type="title" style={styles.headerDateText}>
-            {format(viewedDateObj, 'M월 d일', { locale: ko })}
+        <View style={styles.headerText}>
+          <Pressable style={styles.headerDate} onPress={() => setDatePickerVisible(true)} hitSlop={8}>
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              {format(viewedDateObj, 'M월 d일 EEEE', { locale: ko })}
+            </ThemedText>
+            <Ionicons name="chevron-down" size={14} color={theme.textSecondary} />
+          </Pressable>
+          <ThemedText type="title" style={styles.headerTitle}>
+            {title}
           </ThemedText>
-          <View style={[styles.weekdayBadge, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="smallBold">{format(viewedDateObj, 'EEE').toUpperCase()}</ThemedText>
-          </View>
-        </Pressable>
-
-        <View style={styles.headerActions}>
-          <Link href="/stats" asChild>
-            <Pressable hitSlop={8} style={styles.headerIconButton}>
-              <Ionicons name="stats-chart-outline" size={22} color={theme.text} />
-            </Pressable>
-          </Link>
-          <Link href="/habit/new" asChild>
-            <Pressable hitSlop={8} style={styles.headerIconButton}>
-              <Ionicons name="add" size={24} color={theme.text} />
-            </Pressable>
-          </Link>
         </View>
+        <PressableScale
+          hapticKind="selection"
+          accessibilityLabel="날짜 선택"
+          onPress={() => setDatePickerVisible(true)}
+          style={[styles.headerIconButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+          <Ionicons name="calendar-clear-outline" size={20} color={theme.text} />
+        </PressableScale>
       </View>
 
       <ScrollView
@@ -184,48 +201,75 @@ export default function TodayScreen() {
           const isSelected = day.dateStr === viewedDate;
           const isToday = day.dateStr === today;
           return (
-            <Pressable
+            <PressableScale
               key={day.dateStr}
+              activeScale={0.92}
+              hapticKind={isSelected ? false : 'selection'}
               onPress={() => setViewedDate(day.dateStr)}
               style={[
                 styles.stripDay,
-                {
-                  backgroundColor: theme.backgroundElement,
-                  borderColor: isSelected ? theme.text : 'transparent',
-                },
+                isSelected
+                  ? { backgroundColor: theme.text, borderColor: theme.text }
+                  : { backgroundColor: theme.backgroundElement, borderColor: theme.border },
               ]}>
-              <ThemedText type="small" themeColor="textSecondary">
+              <ThemedText type="small" style={[styles.stripWeekday, { color: isSelected ? theme.background : theme.textSecondary }]}>
                 {day.weekdayLabel}
               </ThemedText>
-              <ThemedText type={isToday ? 'smallBold' : 'default'}>{day.dayNumber}</ThemedText>
-            </Pressable>
+              <ThemedText style={[styles.stripNumber, { color: isSelected ? theme.background : theme.text }]}>
+                {day.dayNumber}
+              </ThemedText>
+              <View style={[styles.todayDot, { backgroundColor: isToday ? (isSelected ? theme.background : theme.accent) : 'transparent' }]} />
+            </PressableScale>
           );
         })}
       </ScrollView>
 
-      <View style={styles.listHeader}>
-        <ThemedText type="subtitle">오늘</ThemedText>
-        {items.length > 0 ? (
-          <ThemedText themeColor="textSecondary">
-            {completedCount}/{items.length}
-          </ThemedText>
-        ) : null}
-      </View>
-
       {items.length === 0 ? (
-        <View style={styles.empty}>
-          <ThemedText type="subtitle">아직 만든 습관이 없어요</ThemedText>
+        <Animated.View entering={FadeInDown.springify().damping(18)} style={styles.empty}>
+          <View style={[styles.emptyBadge, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <ThemedText style={styles.emptyEmoji}>🌱</ThemedText>
+          </View>
+          <ThemedText type="subtitle" style={styles.emptyTitle}>
+            아직 만든 습관이 없어요
+          </ThemedText>
           <ThemedText themeColor="textSecondary" style={styles.emptySubtitle}>
             작은 습관 하나부터 시작해볼까요?
           </ThemedText>
-          <Link href="/habit/new" asChild>
-            <Pressable style={StyleSheet.flatten([styles.cta, { backgroundColor: theme.text }])}>
-              <ThemedText style={{ color: theme.background }}>습관 만들기</ThemedText>
-            </Pressable>
-          </Link>
-        </View>
+          <PressableScale
+            hapticKind="light"
+            onPress={() => router.push('/habit/new')}
+            style={[styles.cta, { backgroundColor: theme.text }]}>
+            <Ionicons name="add" size={18} color={theme.background} />
+            <ThemedText type="smallBold" style={{ color: theme.background }}>
+              습관 만들기
+            </ThemedText>
+          </PressableScale>
+        </Animated.View>
       ) : (
-        <ScrollView style={styles.listScroll} contentContainerStyle={styles.list}>
+        <ScrollView
+          style={styles.listScroll}
+          contentContainerStyle={[styles.list, { paddingBottom: tabBarSpace }]}
+          showsVerticalScrollIndicator={false}>
+          <Animated.View
+            entering={FadeInDown.springify().damping(18)}
+            style={[styles.progressCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <View style={styles.progressTop}>
+              <View style={styles.progressText}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {dayDiff === 0 ? '오늘의 진행' : `${title}의 기록`}
+                </ThemedText>
+                <ThemedText style={styles.progressMessage}>{progressMessage(completedCount, items.length)}</ThemedText>
+              </View>
+              <View style={styles.progressCount}>
+                <ThemedText style={styles.progressBig}>{completedCount}</ThemedText>
+                <ThemedText themeColor="textSecondary" style={styles.progressTotal}>
+                  /{items.length}
+                </ThemedText>
+              </View>
+            </View>
+            <ProgressBar progress={progress} color={progress >= 1 ? theme.text : theme.accent} height={8} />
+          </Animated.View>
+
           <ReorderableList
             data={groups}
             keyExtractor={(group) => group.key}
@@ -233,6 +277,7 @@ export default function TodayScreen() {
             renderItem={(group, dragHandle) => {
               const isCollapsed = collapsedGroups.has(group.key);
               const groupCompleted = group.items.filter((item) => item.isCheckedForViewedDate).length;
+              const groupIndex = groups.indexOf(group);
               // 웹은 헤더 전체가 아니라 전용 손잡이 아이콘만 드래그 영역으로 쓴다
               // — components/reorderable-list.tsx의 DragHandle 문서 참고
               // (react-native-gesture-handler의 웹 구현이 스크롤 가능한
@@ -241,13 +286,23 @@ export default function TodayScreen() {
               // 못 고친다). 네이티브는 기존처럼 헤더 전체 롱프레스로 동작.
               const headerContent = (
                 <>
-                  <Ionicons name={isCollapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={theme.textSecondary} />
                   <ThemedText type="smallBold" style={styles.groupTitle}>
                     {group.name}
                   </ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {groupCompleted}/{group.items.length}
-                  </ThemedText>
+                  <View
+                    style={[
+                      styles.groupCount,
+                      { backgroundColor: groupCompleted === group.items.length ? theme.text : theme.backgroundSelected },
+                    ]}>
+                    <ThemedText
+                      style={[
+                        styles.groupCountText,
+                        { color: groupCompleted === group.items.length ? theme.background : theme.textSecondary },
+                      ]}>
+                      {groupCompleted}/{group.items.length}
+                    </ThemedText>
+                  </View>
+                  <View style={styles.groupSpacer} />
                   {Platform.OS === 'web' ? (
                     <GestureDetector gesture={dragHandle.gesture}>
                       <View hitSlop={8} style={styles.groupDragHandle}>
@@ -255,6 +310,7 @@ export default function TodayScreen() {
                       </View>
                     </GestureDetector>
                   ) : null}
+                  <Ionicons name={isCollapsed ? 'chevron-forward' : 'chevron-down'} size={16} color={theme.textSecondary} />
                 </>
               );
               const header = (
@@ -262,44 +318,49 @@ export default function TodayScreen() {
                   style={[styles.groupHeader, dragHandle.isDragging ? { opacity: 0.6 } : null]}
                   onPress={() => {
                     if (wasDragJustEnded()) return;
+                    haptic('selection');
                     toggleGroupCollapsed(group.key);
                   }}>
                   {headerContent}
                 </Pressable>
               );
               return (
-                <View style={styles.groupSection}>
+                <Animated.View
+                  entering={FadeInDown.delay(80 + Math.max(0, groupIndex) * 70).springify().damping(18)}
+                  style={styles.groupSection}>
                   {Platform.OS === 'web' ? header : <GestureDetector gesture={dragHandle.gesture}>{header}</GestureDetector>}
                   {isCollapsed ? null : (
-                    <ReorderableList
-                      data={group.items}
-                      keyExtractor={(item) => item.habit.id}
-                      onReorder={(newItems) => handleReorderItemsInGroup(group.key, newItems)}
-                      renderItem={(item, itemHandle) =>
-                        Platform.OS === 'web' ? (
-                          <HabitCard item={item} onToggle={() => toggleCheckIn(item.habit)} dragHandle={itemHandle} />
-                        ) : (
-                          <GestureDetector gesture={itemHandle.gesture}>
-                            <View style={itemHandle.isDragging ? styles.draggingItem : null}>
-                              <HabitCard item={item} onToggle={() => toggleCheckIn(item.habit)} />
-                            </View>
-                          </GestureDetector>
-                        )
-                      }
-                    />
+                    <Animated.View entering={FadeIn.duration(220)}>
+                      <ReorderableList
+                        data={group.items}
+                        keyExtractor={(item) => item.habit.id}
+                        onReorder={(newItems) => handleReorderItemsInGroup(group.key, newItems)}
+                        renderItem={(item, itemHandle) =>
+                          Platform.OS === 'web' ? (
+                            <HabitCard item={item} onToggle={() => void handleToggle(item)} dragHandle={itemHandle} />
+                          ) : (
+                            <GestureDetector gesture={itemHandle.gesture}>
+                              <View style={itemHandle.isDragging ? styles.draggingItem : null}>
+                                <HabitCard item={item} onToggle={() => void handleToggle(item)} />
+                              </View>
+                            </GestureDetector>
+                          )
+                        }
+                      />
+                    </Animated.View>
                   )}
-                </View>
+                </Animated.View>
               );
             }}
           />
         </ScrollView>
       )}
 
-      <Link href="/habit/new" asChild>
-        <Pressable style={StyleSheet.flatten([styles.fab, { backgroundColor: theme.text }])}>
-          <Ionicons name="add" size={28} color={theme.background} />
-        </Pressable>
-      </Link>
+      <Celebration
+        trigger={celebration}
+        colors={items.map((item) => item.habit.color)}
+        message={dayDiff === 0 ? '오늘 습관 모두 완료! 🎉' : `${title} 습관 모두 완료! 🎉`}
+      />
 
       <DatePickerModal
         visible={datePickerVisible}
@@ -311,63 +372,77 @@ export default function TodayScreen() {
   );
 }
 
+function progressMessage(done: number, total: number): string {
+  if (total === 0) return '';
+  if (done === total) return '모두 완료했어요 🎉';
+  if (done === 0) return '첫 도장을 찍어볼까요?';
+  if (done / total >= 0.5) return `거의 다 왔어요 · ${total - done}개 남음`;
+  return `좋은 출발이에요 · ${total - done}개 남음`;
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    flexShrink: 0,
-  },
-  headerDate: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  headerDateText: { fontSize: 30, lineHeight: 34 },
-  weekdayBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 },
-  headerActions: { flexDirection: 'row', gap: 4 },
-  headerIconButton: { padding: 6 },
-  strip: { marginTop: 16, flexGrow: 0, flexShrink: 0 },
-  stripContent: { paddingHorizontal: 20, gap: 8 },
-  stripDay: {
-    width: 52,
-    height: 64,
-    borderRadius: 16,
-    borderWidth: 2,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  listHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'flex-end',
-    marginTop: 20,
-    marginBottom: 4,
     paddingHorizontal: 20,
     flexShrink: 0,
   },
-  listScroll: { flex: 1 },
-  list: { paddingHorizontal: 20, paddingBottom: 100 },
-  groupSection: { marginTop: 16 },
-  groupHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 8 },
-  draggingItem: { opacity: 0.85 },
-  groupTitle: { flex: 1 },
-  groupDragHandle: { padding: 2 },
-  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
-  emptySubtitle: { marginTop: 8, marginBottom: 20, textAlign: 'center' },
-  cta: { paddingHorizontal: 24, paddingVertical: 12, borderRadius: 24 },
-  fab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+  headerText: { gap: 2 },
+  headerDate: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  headerTitle: { fontSize: 34, lineHeight: 42, letterSpacing: -0.8 },
+  headerIconButton: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
+    marginBottom: 2,
   },
+  strip: { marginTop: 14, flexGrow: 0, flexShrink: 0 },
+  stripContent: { paddingHorizontal: 20, gap: 8, paddingVertical: 2 },
+  stripDay: {
+    width: 48,
+    height: 66,
+    borderRadius: 18,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripWeekday: { fontSize: 12, lineHeight: 16 },
+  stripNumber: { fontSize: 17, lineHeight: 22, fontFamily: 'NotoSansKR_700Bold' },
+  todayDot: { width: 5, height: 5, borderRadius: 2.5, marginTop: 3 },
+  listScroll: { flex: 1 },
+  list: { paddingHorizontal: 20, paddingTop: 16 },
+  progressCard: { borderRadius: 22, borderWidth: 1, padding: 16, gap: 12 },
+  progressTop: { flexDirection: 'row', alignItems: 'flex-end', justifyContent: 'space-between', gap: 12 },
+  progressText: { flex: 1, gap: 2 },
+  progressMessage: { fontSize: 15, lineHeight: 21, fontFamily: 'NotoSansKR_700Bold' },
+  progressCount: { flexDirection: 'row', alignItems: 'flex-end' },
+  progressBig: { fontSize: 30, lineHeight: 34, fontFamily: 'NotoSansKR_700Bold', letterSpacing: -0.6 },
+  progressTotal: { fontSize: 16, lineHeight: 26, fontFamily: 'NotoSansKR_600SemiBold' },
+  groupSection: { marginTop: 20 },
+  groupHeader: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10, paddingHorizontal: 2 },
+  draggingItem: { opacity: 0.85 },
+  groupTitle: { fontSize: 15 },
+  groupCount: { borderRadius: 8, paddingHorizontal: 7, paddingVertical: 1 },
+  groupCountText: { fontSize: 11.5, lineHeight: 16, fontFamily: 'NotoSansKR_700Bold' },
+  groupSpacer: { flex: 1 },
+  groupDragHandle: { padding: 2 },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32, paddingBottom: 80 },
+  emptyBadge: {
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 18,
+  },
+  emptyEmoji: { fontSize: 38, lineHeight: 46 },
+  emptyTitle: { fontSize: 22, lineHeight: 30, textAlign: 'center' },
+  emptySubtitle: { marginTop: 6, marginBottom: 22, textAlign: 'center' },
+  cta: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 22, paddingVertical: 13, borderRadius: 24 },
 });

@@ -93,7 +93,7 @@ export function DenimCard({ denim, stamps, color, onChange }: Props) {
   ];
 
   return (
-    <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+    <View style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
       <View style={styles.header}>
         <ThemedText type="smallBold">👖 데님</ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
@@ -217,7 +217,7 @@ function Chip({ label, onPress }: { label: string; onPress: () => void }) {
 }
 
 const styles = StyleSheet.create({
-  card: { borderRadius: 20, padding: 16, gap: 12 },
+  card: { borderRadius: 24, borderWidth: 1, padding: 16, gap: 12 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   tileRow: { flexDirection: 'row', gap: 10 },
   tile: { flex: 1, borderRadius: 14, paddingVertical: 10, alignItems: 'center', gap: 2 },
@@ -231,6 +231,6 @@ const styles = StyleSheet.create({
   input: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, fontSize: 15 },
   number: { width: 80, textAlign: 'right' },
   dateButton: { flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
-  problem: { color: '#E85D75' },
+  problem: { color: '#E5484D' },
   save: { paddingHorizontal: 16, paddingVertical: 8, borderRadius: 16 },
 });

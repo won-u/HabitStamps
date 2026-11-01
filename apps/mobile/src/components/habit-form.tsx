@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Switch, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import type { Category, FrequencyConfig, FrequencyType } from '@habit-tracker/core';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
-import { HabitPalette } from '@/constants/theme';
+import { HabitPalette, tintedShadow } from '@/constants/theme';
+import { PressableScale } from '@/components/ui/pressable-scale';
+import { SegmentedControl } from '@/components/ui/segmented-control';
+import { useBottomInset } from '@/hooks/use-bottom-inset';
+import { haptic } from '@/lib/haptics';
 import { categoryRepository } from '@/composition/container';
 
 const ICON_PRESETS = ['💧', '🏃', '📚', '🧘', '🥗', '😴', '✍️', '💊', '🚭', '🎯', '🧥', '👖'];
@@ -67,6 +71,7 @@ export function HabitForm({ initial, hasDenimRecords, submitLabel, onSubmit, onA
   const [categories, setCategories] = useState<readonly Category[]>([]);
   const [addingGroup, setAddingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
+  const bottomInset = useBottomInset();
 
   useEffect(() => categoryRepository.observe().subscribe(setCategories), []);
 
@@ -74,6 +79,7 @@ export function HabitForm({ initial, hasDenimRecords, submitLabel, onSubmit, onA
 
   async function handleSubmit() {
     if (!canSubmit) return;
+    haptic('success');
     setSubmitting(true);
     try {
       await onSubmit({
@@ -110,11 +116,11 @@ export function HabitForm({ initial, hasDenimRecords, submitLabel, onSubmit, onA
 
   return (
     <ThemedView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <ThemedText type="small" themeColor="textSecondary">
-          이름
-        </ThemedText>
-        <View style={[styles.nameBox, { backgroundColor: color }]}>
+      <ScrollView contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <View style={[styles.preview, { backgroundColor: color, boxShadow: tintedShadow(color, 0.35) }]}>
+          <View style={styles.previewIcon}>
+            <Text style={styles.previewEmoji}>{icon}</Text>
+          </View>
           <TextInput
             value={name}
             onChangeText={setName}
@@ -123,60 +129,68 @@ export function HabitForm({ initial, hasDenimRecords, submitLabel, onSubmit, onA
             maxLength={30}
             style={styles.nameInput}
           />
+          <View style={styles.previewCheck} />
+        </View>
+        <ThemedText type="small" themeColor="textSecondary" style={styles.previewHint}>
+          오늘 화면에 이렇게 보여요
+        </ThemedText>
+
+        <SectionLabel>아이콘</SectionLabel>
+        <View style={styles.row}>
+          {ICON_PRESETS.map((preset) => {
+            const selected = icon === preset;
+            return (
+              <PressableScale
+                key={preset}
+                activeScale={0.88}
+                hapticKind="selection"
+                onPress={() => setIcon(preset)}
+                style={[
+                  styles.iconChip,
+                  {
+                    backgroundColor: selected ? theme.backgroundSelected : theme.backgroundElement,
+                    borderColor: selected ? theme.text : theme.border,
+                  },
+                ]}>
+                <Text style={styles.iconChipEmoji}>{preset}</Text>
+              </PressableScale>
+            );
+          })}
         </View>
 
-        <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-          아이콘
-        </ThemedText>
+        <SectionLabel>컬러</SectionLabel>
         <View style={styles.row}>
-          {ICON_PRESETS.map((preset) => (
-            <Pressable
-              key={preset}
-              onPress={() => setIcon(preset)}
-              style={[
-                styles.iconChip,
-                { backgroundColor: icon === preset ? theme.backgroundSelected : theme.backgroundElement },
-              ]}>
-              <ThemedText>{preset}</ThemedText>
-            </Pressable>
-          ))}
+          {HabitPalette.map((swatch) => {
+            const selected = color === swatch.hex;
+            return (
+              <PressableScale
+                key={swatch.hex}
+                activeScale={0.85}
+                hapticKind="selection"
+                accessibilityLabel={swatch.name}
+                onPress={() => setColor(swatch.hex)}
+                style={[styles.swatchRing, { borderColor: selected ? swatch.hex : 'transparent' }]}>
+                <View style={[styles.swatch, { backgroundColor: swatch.hex }]}>
+                  {selected ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
+                </View>
+              </PressableScale>
+            );
+          })}
         </View>
 
-        <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-          컬러
-        </ThemedText>
+        <SectionLabel>그룹</SectionLabel>
         <View style={styles.row}>
-          {HabitPalette.map((swatch) => (
-            <Pressable key={swatch.hex} onPress={() => setColor(swatch.hex)} style={[styles.swatch, { backgroundColor: swatch.hex }]}>
-              {color === swatch.hex ? <Ionicons name="checkmark" size={16} color="#fff" /> : null}
-            </Pressable>
-          ))}
-        </View>
-
-        <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-          그룹
-        </ThemedText>
-        <View style={styles.row}>
-          <Pressable
-            onPress={() => setCategoryId(null)}
-            style={[styles.groupChip, { backgroundColor: categoryId === null ? theme.text : theme.backgroundElement }]}>
-            <ThemedText style={{ color: categoryId === null ? theme.background : theme.text }}>기본</ThemedText>
-          </Pressable>
+          <Chip label="기본" selected={categoryId === null} onPress={() => setCategoryId(null)} />
           {categories.map((category) => (
-            <Pressable
+            <Chip
               key={category.id}
+              label={category.name}
+              selected={categoryId === category.id}
               onPress={() => setCategoryId(category.id)}
-              style={[
-                styles.groupChip,
-                { backgroundColor: categoryId === category.id ? theme.text : theme.backgroundElement },
-              ]}>
-              <ThemedText style={{ color: categoryId === category.id ? theme.background : theme.text }}>
-                {category.name}
-              </ThemedText>
-            </Pressable>
+            />
           ))}
           {addingGroup ? (
-            <View style={[styles.groupChip, styles.groupInputChip, { borderColor: theme.backgroundSelected }]}>
+            <View style={[styles.groupChip, styles.groupInputChip, { borderColor: theme.text, backgroundColor: theme.backgroundElement }]}>
               <TextInput
                 value={newGroupName}
                 onChangeText={setNewGroupName}
@@ -192,72 +206,53 @@ export function HabitForm({ initial, hasDenimRecords, submitLabel, onSubmit, onA
               </Pressable>
             </View>
           ) : (
-            <Pressable
+            <PressableScale
+              hapticKind="selection"
               onPress={() => setAddingGroup(true)}
-              style={[styles.groupChip, { backgroundColor: theme.backgroundElement, flexDirection: 'row', gap: 4 }]}>
+              style={[styles.groupChip, styles.addGroupChip, { borderColor: theme.textSecondary }]}>
               <Ionicons name="add" size={16} color={theme.text} />
-              <ThemedText>새 그룹</ThemedText>
-            </Pressable>
+              <ThemedText type="small">새 그룹</ThemedText>
+            </PressableScale>
           )}
         </View>
 
-        <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-          반복 주기
-        </ThemedText>
-        <View style={styles.row}>
-          {FREQUENCY_OPTIONS.map((option) => (
-            <Pressable
-              key={option.value}
-              onPress={() => setFrequencyType(option.value)}
-              style={[
-                styles.segment,
-                { backgroundColor: frequencyType === option.value ? theme.text : theme.backgroundElement },
-              ]}>
-              <ThemedText style={{ color: frequencyType === option.value ? theme.background : theme.text }}>
-                {option.label}
-              </ThemedText>
-            </Pressable>
-          ))}
-        </View>
+        <SectionLabel>반복 주기</SectionLabel>
+        <SegmentedControl options={FREQUENCY_OPTIONS} value={frequencyType} onChange={setFrequencyType} />
 
         {frequencyType === 'weekdays' ? (
-          <View style={[styles.row, styles.sectionLabel]}>
-            {WEEKDAY_LABELS.map((label, day) => (
-              <Pressable
-                key={label}
-                onPress={() => toggleWeekday(day)}
-                style={[styles.dayChip, { backgroundColor: weekdays.includes(day) ? theme.text : theme.backgroundElement }]}>
-                <ThemedText style={{ color: weekdays.includes(day) ? theme.background : theme.text }}>{label}</ThemedText>
-              </Pressable>
-            ))}
+          <View style={[styles.weekdayRow, styles.subControl]}>
+            {WEEKDAY_LABELS.map((label, day) => {
+              const selected = weekdays.includes(day);
+              return (
+                <PressableScale
+                  key={label}
+                  activeScale={0.88}
+                  hapticKind="selection"
+                  onPress={() => toggleWeekday(day)}
+                  style={[
+                    styles.dayChip,
+                    selected
+                      ? { backgroundColor: color, borderColor: color }
+                      : { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+                  ]}>
+                  <ThemedText type="smallBold" style={{ color: selected ? '#FFFFFF' : theme.text }}>
+                    {label}
+                  </ThemedText>
+                </PressableScale>
+              );
+            })}
           </View>
         ) : null}
 
         {frequencyType === 'timesPerWeek' ? (
-          <View style={[styles.stepper, styles.sectionLabel]}>
-            <Pressable onPress={() => setTimesPerWeek((n) => Math.max(1, n - 1))} style={styles.stepperButton}>
-              <ThemedText type="subtitle">-</ThemedText>
-            </Pressable>
-            <ThemedText type="subtitle">주 {timesPerWeek}회</ThemedText>
-            <Pressable onPress={() => setTimesPerWeek((n) => Math.min(7, n + 1))} style={styles.stepperButton}>
-              <ThemedText type="subtitle">+</ThemedText>
-            </Pressable>
-          </View>
+          <Stepper label={`주 ${timesPerWeek}회`} onMinus={() => setTimesPerWeek((n) => Math.max(1, n - 1))} onPlus={() => setTimesPerWeek((n) => Math.min(7, n + 1))} />
         ) : null}
 
         {frequencyType === 'timesPerMonth' ? (
-          <View style={[styles.stepper, styles.sectionLabel]}>
-            <Pressable onPress={() => setTimesPerMonth((n) => Math.max(1, n - 1))} style={styles.stepperButton}>
-              <ThemedText type="subtitle">-</ThemedText>
-            </Pressable>
-            <ThemedText type="subtitle">월 {timesPerMonth}회</ThemedText>
-            <Pressable onPress={() => setTimesPerMonth((n) => Math.min(31, n + 1))} style={styles.stepperButton}>
-              <ThemedText type="subtitle">+</ThemedText>
-            </Pressable>
-          </View>
+          <Stepper label={`월 ${timesPerMonth}회`} onMinus={() => setTimesPerMonth((n) => Math.max(1, n - 1))} onPlus={() => setTimesPerMonth((n) => Math.min(31, n + 1))} />
         ) : null}
 
-        <View style={[styles.denimRow, styles.sectionLabel]}>
+        <View style={[styles.denimRow, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <View style={styles.denimText}>
             <ThemedText>👖 데님 기록</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
@@ -266,50 +261,147 @@ export function HabitForm({ initial, hasDenimRecords, submitLabel, onSubmit, onA
                 : '끄고 저장하면 적어 둔 착용·세탁 기록이 지워져요.'}
             </ThemedText>
           </View>
-          <Switch value={isDenim} onValueChange={setIsDenim} />
+          <Switch value={isDenim} onValueChange={setIsDenim} trackColor={{ true: color }} />
         </View>
 
         {onArchive ? (
-          <Pressable onPress={onArchive} style={[styles.deleteButton, { borderColor: theme.textSecondary, marginTop: 32 }]}>
-            <ThemedText themeColor="textSecondary">보관하기</ThemedText>
-          </Pressable>
+          <PressableScale
+            hapticKind="light"
+            onPress={onArchive}
+            style={[styles.secondaryButton, { borderColor: theme.border, backgroundColor: theme.backgroundElement, marginTop: 32 }]}>
+            <Ionicons name="archive-outline" size={16} color={theme.text} />
+            <ThemedText>보관하기</ThemedText>
+          </PressableScale>
         ) : null}
 
         {onDelete ? (
-          <Pressable onPress={onDelete} style={[styles.deleteButton, { borderColor: '#E85D75', marginTop: onArchive ? 12 : 32 }]}>
-            <ThemedText style={{ color: '#E85D75' }}>습관 삭제</ThemedText>
-          </Pressable>
+          <PressableScale
+            hapticKind="light"
+            onPress={onDelete}
+            style={[styles.secondaryButton, { borderColor: theme.border, backgroundColor: theme.backgroundElement, marginTop: onArchive ? 10 : 32 }]}>
+            <Ionicons name="trash-outline" size={16} color={theme.danger} />
+            <ThemedText style={{ color: theme.danger }}>습관 삭제</ThemedText>
+          </PressableScale>
         ) : null}
       </ScrollView>
 
-      <Pressable
-        onPress={handleSubmit}
-        disabled={!canSubmit}
-        style={[styles.submit, { backgroundColor: canSubmit ? theme.text : theme.backgroundSelected }]}>
-        <ThemedText style={{ color: theme.background }}>{submitLabel}</ThemedText>
-      </Pressable>
+      <View style={[styles.footer, { paddingBottom: Math.max(16, bottomInset), borderTopColor: theme.border, backgroundColor: theme.background }]}>
+        <PressableScale
+          onPress={handleSubmit}
+          disabled={!canSubmit}
+          style={[styles.submit, { backgroundColor: canSubmit ? theme.text : theme.backgroundSelected }]}>
+          <ThemedText type="smallBold" style={[styles.submitText, { color: canSubmit ? theme.background : theme.textSecondary }]}>
+            {submitting ? '저장 중...' : submitLabel}
+          </ThemedText>
+        </PressableScale>
+      </View>
     </ThemedView>
+  );
+}
+
+function SectionLabel({ children }: { children: string }) {
+  return (
+    <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionLabel}>
+      {children}
+    </ThemedText>
+  );
+}
+
+function Chip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
+  const theme = useTheme();
+  return (
+    <PressableScale
+      hapticKind="selection"
+      onPress={onPress}
+      style={[
+        styles.groupChip,
+        selected
+          ? { backgroundColor: theme.text, borderColor: theme.text }
+          : { backgroundColor: theme.backgroundElement, borderColor: theme.border },
+      ]}>
+      <ThemedText type="small" style={{ color: selected ? theme.background : theme.text }}>
+        {label}
+      </ThemedText>
+    </PressableScale>
+  );
+}
+
+function Stepper({ label, onMinus, onPlus }: { label: string; onMinus: () => void; onPlus: () => void }) {
+  const theme = useTheme();
+  const buttonStyle = [styles.stepperButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }];
+  return (
+    <View style={[styles.stepper, styles.subControl]}>
+      <PressableScale activeScale={0.88} hapticKind="selection" onPress={onMinus} style={buttonStyle} accessibilityLabel="줄이기">
+        <Ionicons name="remove" size={20} color={theme.text} />
+      </PressableScale>
+      <ThemedText style={styles.stepperLabel}>{label}</ThemedText>
+      <PressableScale activeScale={0.88} hapticKind="selection" onPress={onPlus} style={buttonStyle} accessibilityLabel="늘리기">
+        <Ionicons name="add" size={20} color={theme.text} />
+      </PressableScale>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scroll: { padding: 20 },
-  sectionLabel: { marginTop: 20, marginBottom: 8 },
-  nameBox: { borderRadius: 16, paddingHorizontal: 16, marginTop: 8 },
-  nameInput: { fontSize: 17, fontWeight: '700', color: '#FFFFFF', paddingVertical: 16 },
+  scroll: { padding: 20, paddingBottom: 32 },
+  sectionLabel: { marginTop: 24, marginBottom: 10, marginLeft: 2 },
+  subControl: { marginTop: 12 },
+  preview: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 22,
+    paddingVertical: 12,
+    paddingLeft: 12,
+    paddingRight: 14,
+    marginTop: 4,
+  },
+  previewIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.22)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewEmoji: { fontSize: 22, lineHeight: 28 },
+  previewCheck: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'rgba(255,255,255,0.18)',
+  },
+  previewHint: { marginTop: 8, marginLeft: 4 },
+  nameInput: { flex: 1, minWidth: 0, fontSize: 17, fontFamily: 'NotoSansKR_700Bold', color: '#FFFFFF', paddingVertical: 10 },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, alignItems: 'center' },
-  iconChip: { width: 44, height: 44, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
+  iconChip: { width: 48, height: 48, borderRadius: 15, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+  iconChipEmoji: { fontSize: 22, lineHeight: 28 },
+  swatchRing: { width: 42, height: 42, borderRadius: 21, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   swatch: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-  groupChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18, alignItems: 'center' },
-  groupInputChip: { flexDirection: 'row', alignItems: 'center', gap: 6, borderWidth: 1, paddingVertical: 6 },
+  groupChip: { paddingHorizontal: 14, paddingVertical: 9, borderRadius: 18, borderWidth: 1, alignItems: 'center' },
+  addGroupChip: { flexDirection: 'row', gap: 4, borderStyle: 'dashed' },
+  groupInputChip: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 },
   groupInput: { minWidth: 90, fontSize: 14, padding: 0 },
-  segment: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
-  dayChip: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 20 },
-  stepperButton: { paddingHorizontal: 16, paddingVertical: 8 },
-  denimRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  weekdayRow: { flexDirection: 'row', justifyContent: 'space-between' },
+  dayChip: { width: 42, height: 42, borderRadius: 21, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  stepper: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 24 },
+  stepperButton: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  stepperLabel: { fontSize: 22, lineHeight: 30, fontFamily: 'NotoSansKR_700Bold', minWidth: 90, textAlign: 'center' },
+  denimRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 24, borderRadius: 18, borderWidth: 1, padding: 14 },
   denimText: { flex: 1, gap: 2 },
-  deleteButton: { marginTop: 32, borderWidth: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
-  submit: { margin: 20, paddingVertical: 16, borderRadius: 16, alignItems: 'center' },
+  secondaryButton: {
+    flexDirection: 'row',
+    gap: 6,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  footer: { paddingHorizontal: 20, paddingTop: 12, borderTopWidth: StyleSheet.hairlineWidth },
+  submit: { paddingVertical: 16, borderRadius: 18, alignItems: 'center' },
+  submitText: { fontSize: 16 },
 });

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Link } from 'expo-router';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import type { Session } from '@supabase/supabase-js';
 
@@ -12,9 +12,14 @@ import { useSettingsStore, type ColorSchemePreference } from '@/state/settings-s
 import { getConfiguredSupabaseClient, runSync } from '@/composition/container';
 import { signInWithGoogle, signOutSupabase } from '@/data/supabase/auth';
 import { ExportTokenSection } from '@/components/export-token-section';
+import { SegmentedControl } from '@/components/ui/segmented-control';
+import { PressableScale } from '@/components/ui/pressable-scale';
+import { useTabBarSpace } from '@/hooks/use-bottom-inset';
+
+type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
 const SCHEME_OPTIONS: { value: ColorSchemePreference; label: string }[] = [
-  { value: 'system', label: '시스템 설정' },
+  { value: 'system', label: '시스템' },
   { value: 'light', label: '라이트' },
   { value: 'dark', label: '다크' },
 ];
@@ -26,6 +31,7 @@ export default function SettingsScreen() {
   const [session, setSession] = useState<Session | null>(null);
   const [signingIn, setSigningIn] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const tabBarSpace = useTabBarSpace();
 
   useEffect(() => {
     const client = getConfiguredSupabaseClient();
@@ -60,93 +66,172 @@ export default function SettingsScreen() {
 
   return (
     <ThemedView style={styles.container}>
-      <ScrollView contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 20 }]}>
-        <ThemedText type="title">설정</ThemedText>
-
-        <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-          외관
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingTop: insets.top + 12, paddingBottom: tabBarSpace }]}
+        showsVerticalScrollIndicator={false}>
+        <ThemedText type="smallBold" themeColor="textSecondary">
+          앱 환경
         </ThemedText>
-        <View style={styles.row}>
-          {SCHEME_OPTIONS.map((option) => (
-            <Pressable
-              key={option.value}
-              onPress={() => setColorSchemePreference(option.value)}
-              style={[
-                styles.segment,
-                { backgroundColor: colorSchemePreference === option.value ? theme.text : theme.backgroundElement },
-              ]}>
-              <ThemedText style={{ color: colorSchemePreference === option.value ? theme.background : theme.text }}>
-                {option.label}
+        <ThemedText type="title" style={styles.title}>
+          설정
+        </ThemedText>
+
+        <Section title="외관">
+          <View style={styles.sectionPad}>
+            <SegmentedControl options={SCHEME_OPTIONS} value={colorSchemePreference} onChange={setColorSchemePreference} />
+          </View>
+        </Section>
+
+        <Section title="관리">
+          <Row icon="archive-outline" iconColor="#F5A623" label="보관된 습관 관리" onPress={() => router.push('/archive')} />
+        </Section>
+
+        <Section title="동기화">
+          {session ? (
+            <>
+              <Row
+                icon="person-circle-outline"
+                iconColor="#2FBFA0"
+                label={session.user.email ?? session.user.id}
+                detail={lastSyncedAt ? `마지막 동기화 · ${new Date(lastSyncedAt).toLocaleString()}` : '다른 기기와 자동으로 동기화돼요'}
+              />
+              <Row icon="log-out-outline" iconColor="#7C8A9E" label="로그아웃" onPress={handleSignOut} divider />
+            </>
+          ) : (
+            <View style={styles.sectionPad}>
+              <ThemedText type="small" themeColor="textSecondary">
+                Google로 로그인하면 다른 기기와 자동으로 동기화됩니다. 로그인하지 않으면 데이터는 이 기기에만 저장돼요.
               </ThemedText>
-            </Pressable>
-          ))}
-        </View>
+              <PressableScale
+                hapticKind="light"
+                onPress={handleGoogleSignIn}
+                disabled={signingIn}
+                style={[styles.primaryButton, { backgroundColor: theme.text, opacity: signingIn ? 0.6 : 1 }]}>
+                <Ionicons name="logo-google" size={16} color={theme.background} />
+                <ThemedText type="smallBold" style={{ color: theme.background }}>
+                  {signingIn ? '로그인 중...' : 'Google로 로그인'}
+                </ThemedText>
+              </PressableScale>
+              {authError ? <ThemedText style={[styles.hint, { color: theme.danger }]}>{authError}</ThemedText> : null}
+            </View>
+          )}
+        </Section>
 
-        <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-          관리
-        </ThemedText>
-        <Link href="/archive" asChild>
-          <Pressable style={StyleSheet.flatten([styles.linkRow, { backgroundColor: theme.backgroundElement }])}>
-            <ThemedText>보관된 습관 관리</ThemedText>
-            <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} />
-          </Pressable>
-        </Link>
-
-        <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-          동기화
-        </ThemedText>
         {session ? (
-          <>
-            <ThemedText themeColor="textSecondary" style={styles.hint}>
-              {session.user.email ?? session.user.id} 로 로그인됨 — 다른 기기와 자동으로 동기화됩니다.
-            </ThemedText>
-            <Pressable onPress={handleSignOut} style={[styles.syncButton, { backgroundColor: theme.backgroundElement }]}>
-              <ThemedText>로그아웃</ThemedText>
-            </Pressable>
-            {lastSyncedAt ? (
-              <ThemedText themeColor="textSecondary" style={styles.hint}>
-                마지막 동기화: {new Date(lastSyncedAt).toLocaleString()}
-              </ThemedText>
-            ) : null}
+          <Section title="외부 앱 연동 (읽기 전용)">
+            <View style={styles.sectionPad}>
+              <ExportTokenSection />
+            </View>
+          </Section>
+        ) : null}
 
-            <ThemedText type="small" themeColor="textSecondary" style={styles.sectionLabel}>
-              외부 앱 연동 (읽기 전용)
-            </ThemedText>
-            <ExportTokenSection />
-          </>
-        ) : (
-          <>
-            <ThemedText themeColor="textSecondary" style={styles.hint}>
-              Google로 로그인하면 다른 기기와 자동으로 동기화됩니다. 로그인하지 않으면 데이터는 이 기기에만 저장돼요.
-            </ThemedText>
-            <Pressable
-              onPress={handleGoogleSignIn}
-              disabled={signingIn}
-              style={[styles.syncButton, { backgroundColor: theme.text }]}>
-              <ThemedText style={{ color: theme.background }}>{signingIn ? '로그인 중...' : 'Google로 로그인'}</ThemedText>
-            </Pressable>
-            {authError ? <ThemedText style={[styles.hint, { color: '#E85D75' }]}>{authError}</ThemedText> : null}
-          </>
-        )}
+        <ViewportDiagnostics />
       </ScrollView>
     </ThemedView>
   );
 }
 
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  const theme = useTheme();
+  return (
+    <View style={styles.section}>
+      <ThemedText type="smallBold" themeColor="textSecondary" style={styles.sectionLabel}>
+        {title}
+      </ThemedText>
+      <View style={[styles.sectionCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+        {children}
+      </View>
+    </View>
+  );
+}
+
+function Row({
+  icon,
+  iconColor,
+  label,
+  detail,
+  onPress,
+  divider,
+}: {
+  icon: IoniconName;
+  iconColor: string;
+  label: string;
+  detail?: string;
+  onPress?: () => void;
+  divider?: boolean;
+}) {
+  const theme = useTheme();
+  const content = (
+    <>
+      <View style={[styles.rowIcon, { backgroundColor: iconColor }]}>
+        <Ionicons name={icon} size={17} color="#FFFFFF" />
+      </View>
+      <View style={styles.rowText}>
+        <ThemedText numberOfLines={1}>{label}</ThemedText>
+        {detail ? (
+          <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+            {detail}
+          </ThemedText>
+        ) : null}
+      </View>
+      {onPress ? <Ionicons name="chevron-forward" size={18} color={theme.textSecondary} /> : null}
+    </>
+  );
+  const rowStyle = [styles.row, divider ? { borderTopWidth: 1, borderTopColor: theme.border } : null];
+  if (!onPress) return <View style={rowStyle}>{content}</View>;
+  return (
+    <PressableScale activeScale={0.98} hapticKind="selection" onPress={onPress} style={rowStyle}>
+      {content}
+    </PressableScale>
+  );
+}
+
+/**
+ * One faint line of viewport numbers (web standalone only) — the iOS PWA
+ * bottom-gap bug can't be reproduced off-device, so this is what to read
+ * off a real phone if the gap ever comes back. Values come from the
+ * viewport-fit script in app/+html.tsx.
+ */
+function ViewportDiagnostics() {
+  const [text, setText] = useState<string | null>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+    const info = (window as Window & {
+      __viewportFit?: { innerHeight: number; screenHeight: number; safeTop: number; applied: boolean };
+    }).__viewportFit;
+    if (!info) return;
+    setText(
+      `viewport ${info.innerHeight}/${info.screenHeight} · top ${info.safeTop} · ${info.applied ? 'fit 적용' : 'fit 없음'}`,
+    );
+  }, []);
+  if (!text) return null;
+  return (
+    <ThemedText type="small" themeColor="textSecondary" style={styles.diagnostics}>
+      {text}
+    </ThemedText>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scroll: { padding: 20 },
-  sectionLabel: { marginTop: 24, marginBottom: 8 },
-  row: { flexDirection: 'row', gap: 8 },
-  segment: { paddingHorizontal: 16, paddingVertical: 10, borderRadius: 20 },
+  scroll: { paddingHorizontal: 20 },
+  title: { fontSize: 34, lineHeight: 42, letterSpacing: -0.8 },
+  section: { marginTop: 22 },
+  sectionLabel: { marginBottom: 8, marginLeft: 4 },
+  sectionCard: { borderRadius: 20, borderWidth: 1, overflow: 'hidden' },
+  sectionPad: { padding: 14 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 12 },
+  rowIcon: { width: 30, height: 30, borderRadius: 9, alignItems: 'center', justifyContent: 'center' },
+  rowText: { flex: 1 },
   hint: { marginTop: 8 },
-  linkRow: {
+  primaryButton: {
+    marginTop: 14,
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    borderRadius: 14,
-    paddingHorizontal: 16,
+    gap: 8,
     paddingVertical: 14,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  syncButton: { marginTop: 16, paddingVertical: 14, borderRadius: 14, alignItems: 'center' },
+  diagnostics: { marginTop: 28, textAlign: 'center', fontSize: 11, opacity: 0.6 },
 });

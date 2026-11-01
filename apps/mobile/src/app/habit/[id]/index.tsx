@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import Animated, { FadeInDown, ZoomIn } from 'react-native-reanimated';
 import { Link, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -23,6 +24,12 @@ import { useMonthSlideCarousel } from '@/hooks/use-month-slide-carousel';
 import { MonthSlideTrack } from '@/components/month-slide-track';
 import { DenimCard } from '@/components/denim-card';
 import { habitRepository, checkInRepository } from '@/composition/container';
+import { PressableScale } from '@/components/ui/pressable-scale';
+import { JumpToTodayButton } from '@/components/ui/jump-to-today-button';
+import { useBottomInset } from '@/hooks/use-bottom-inset';
+import { useCountUp } from '@/hooks/use-count-up';
+import { tintedShadow } from '@/constants/theme';
+import { haptic } from '@/lib/haptics';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 const STREAK_LOOKBACK_DAYS = 400;
@@ -32,6 +39,17 @@ const MAX_WEEK_ROWS = 6;
 
 // Dates here are always 'yyyy-MM-dd' strings, so a plain character swap
 // avoids re-parsing them through Date (and the TZ bugs that invites).
+function frequencyLabel(habit: Habit): string {
+  const config = habit.frequencyConfig;
+  if (habit.frequencyType === 'weekdays') {
+    const days = (config.weekdays ?? []).map((day) => WEEKDAY_LABELS[day]).join('·');
+    return days ? `매주 ${days}` : '특정 요일';
+  }
+  if (habit.frequencyType === 'timesPerWeek') return `주 ${config.timesPerWeek ?? 1}회`;
+  if (habit.frequencyType === 'timesPerMonth') return `월 ${config.timesPerMonth ?? 1}회`;
+  return '매일';
+}
+
 function formatRange(range: StreakRange): string {
   const dot = (dateStr: string) => dateStr.replaceAll('-', '.');
   return range.start === range.end ? dot(range.start) : `${dot(range.start)} ~ ${dot(range.end)}`;
@@ -45,6 +63,10 @@ export default function HabitDetailScreen() {
   const [checkIns, setCheckIns] = useState<readonly CheckIn[]>([]);
   const [month, setMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
+  // The day whose stamp was just toggled on — only that cell plays the
+  // "stamp" pop-in, so opening the screen doesn't animate every past stamp.
+  const [justStamped, setJustStamped] = useState<string | null>(null);
+  const bottomInset = useBottomInset();
 
   useEffect(() => {
     habitRepository.getById(id).then(setHabit);
@@ -95,9 +117,13 @@ export default function HabitDetailScreen() {
   async function handleDayPress(dateStr: string) {
     if (!habit || dateStr > today) return;
     if (selectedDate !== dateStr) {
+      haptic('selection');
       setSelectedDate(dateStr);
       return;
     }
+    const willCheck = !checkedDates.has(dateStr);
+    haptic(willCheck ? 'medium' : 'light');
+    setJustStamped(willCheck ? dateStr : null);
     await checkInRepository.toggle(habit.id, dateStr);
   }
 
@@ -107,32 +133,75 @@ export default function HabitDetailScreen() {
     <ThemedView style={styles.container}>
       <Stack.Screen
         options={{
-          title: habit.name,
+          // The hero block below already shows the name large — keep the bar itself quiet.
+          title: '',
           headerRight: () => (
             <Link href={{ pathname: '/habit/[id]/edit', params: { id: habit.id } }} asChild>
-              <Pressable hitSlop={8}>
-                <Ionicons name="create-outline" size={22} color={theme.text} />
+              <Pressable
+                hitSlop={8}
+                // Link asChild throws on an array style — flatten (docs/ux-design.md §5).
+                style={StyleSheet.flatten([styles.editButton, { backgroundColor: theme.backgroundElement, borderColor: theme.border }])}>
+                <Ionicons name="create-outline" size={16} color={theme.text} />
+                <ThemedText type="smallBold">수정</ThemedText>
               </Pressable>
             </Link>
           ),
         }}
       />
-      <ScrollView contentContainerStyle={styles.scroll}>
-        <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+      <ScrollView
+        contentContainerStyle={[styles.scroll, { paddingBottom: bottomInset + 80 }]}
+        showsVerticalScrollIndicator={false}>
+        <Animated.View entering={FadeInDown.springify().damping(18)} style={styles.hero}>
+          <View style={[styles.heroIcon, { backgroundColor: habit.color, boxShadow: tintedShadow(habit.color, 0.4) }]}>
+            <Text style={styles.heroEmoji}>{habit.icon}</Text>
+          </View>
+          <View style={styles.heroText}>
+            <ThemedText style={styles.heroName} numberOfLines={2}>
+              {habit.name}
+            </ThemedText>
+            <View style={styles.heroMeta}>
+              <View style={[styles.heroChip, { backgroundColor: theme.backgroundSelected }]}>
+                <Ionicons name="repeat" size={12} color={theme.textSecondary} />
+                <ThemedText type="small" themeColor="textSecondary" style={styles.heroChipText}>
+                  {frequencyLabel(habit)}
+                </ThemedText>
+              </View>
+              {current > 0 ? (
+                <View style={[styles.heroChip, { backgroundColor: theme.backgroundSelected }]}>
+                  <ThemedText type="small" style={styles.heroChipText}>
+                    🔥 {current}
+                  </ThemedText>
+                </View>
+              ) : null}
+            </View>
+          </View>
+        </Animated.View>
+
+        <Animated.View
+          entering={FadeInDown.delay(60).springify().damping(18)}
+          style={[styles.card, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
           <View style={styles.monthHeader}>
-            <Pressable onPress={() => goToMonth(-1)} hitSlop={8}>
-              <Ionicons name="chevron-back" size={20} color={theme.text} />
-            </Pressable>
+            <PressableScale
+              hapticKind="selection"
+              accessibilityLabel="이전 달"
+              onPress={() => goToMonth(-1)}
+              style={[styles.navButton, { backgroundColor: theme.backgroundSelected }]}>
+              <Ionicons name="chevron-back" size={16} color={theme.text} />
+            </PressableScale>
             <ThemedText type="smallBold">{format(month, 'yyyy년 M월', { locale: ko })}</ThemedText>
-            <Pressable onPress={() => goToMonth(1)} hitSlop={8}>
-              <Ionicons name="chevron-forward" size={20} color={theme.text} />
-            </Pressable>
+            <PressableScale
+              hapticKind="selection"
+              accessibilityLabel="다음 달"
+              onPress={() => goToMonth(1)}
+              style={[styles.navButton, { backgroundColor: theme.backgroundSelected }]}>
+              <Ionicons name="chevron-forward" size={16} color={theme.text} />
+            </PressableScale>
           </View>
 
           <View style={styles.weekRow}>
             {WEEKDAY_LABELS.map((label, index) => (
               <View key={label} style={styles.dayCell}>
-                <ThemedText type="small" style={index === 0 ? { color: '#E85D75' } : { color: theme.textSecondary }}>
+                <ThemedText type="small" style={index === 0 ? { color: theme.danger } : { color: theme.textSecondary }}>
                   {label}
                 </ThemedText>
               </View>
@@ -153,13 +222,14 @@ export default function HabitDetailScreen() {
                 color={habit.color}
                 todayStr={today}
                 selectedDate={selectedDate}
+                justStamped={justStamped}
                 onDayPress={handleDayPress}
               />
             )}
           />
 
-          <ThemedText themeColor="textSecondary" style={styles.monthCount}>
-            이번 달 {monthlyCheckedCount}회 체크인
+          <ThemedText type="small" themeColor="textSecondary" style={styles.monthCount}>
+            {format(month, 'M월')} {monthlyCheckedCount}회 · 날짜를 두 번 탭하면 도장
           </ThemedText>
 
           {selectedStamp ? (
@@ -178,7 +248,7 @@ export default function HabitDetailScreen() {
               </Pressable>
             </View>
           ) : null}
-        </View>
+        </Animated.View>
 
         {habit.denim ? (
           <DenimCard
@@ -191,7 +261,7 @@ export default function HabitDetailScreen() {
 
         <View style={styles.statisticSection}>
           <ThemedText type="smallBold" themeColor="textSecondary" style={styles.statisticTitle}>
-            Statistic
+            기록
           </ThemedText>
           <View style={styles.tileRow}>
             {(
@@ -202,26 +272,20 @@ export default function HabitDetailScreen() {
                 { label: '전체', value: periodCounts.allTime },
               ] as const
             ).map((tile) => (
-              <View key={tile.label} style={[styles.tile, { backgroundColor: theme.backgroundElement }]}>
-                <ThemedText type="title" style={styles.tileValue}>
-                  {tile.value}
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {tile.label}
-                </ThemedText>
-              </View>
+              <CountTile key={tile.label} label={tile.label} value={tile.value} />
             ))}
           </View>
         </View>
 
         <View style={styles.streakRow}>
-          <View style={[styles.streakCard, { backgroundColor: theme.backgroundElement }]}>
+          <View style={[styles.streakCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
             <View style={styles.streakLabelRow}>
+              <Ionicons name="flame" size={14} color={habit.color} />
               <ThemedText type="small" themeColor="textSecondary">
                 현재 스트릭
               </ThemedText>
               {isCurrentStreakRecord ? (
-                <View style={styles.recordBadge}>
+                <View style={[styles.recordBadge, { backgroundColor: theme.danger }]}>
                   <ThemedText type="small" style={styles.recordBadgeText}>
                     RECORD
                   </ThemedText>
@@ -237,10 +301,13 @@ export default function HabitDetailScreen() {
               </ThemedText>
             ) : null}
           </View>
-          <View style={[styles.streakCard, { backgroundColor: theme.backgroundElement }]}>
-            <ThemedText type="small" themeColor="textSecondary">
-              최장 스트릭
-            </ThemedText>
+          <View style={[styles.streakCard, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+            <View style={styles.streakLabelRow}>
+              <Ionicons name="trophy" size={14} color={theme.textSecondary} />
+              <ThemedText type="small" themeColor="textSecondary">
+                최장 스트릭
+              </ThemedText>
+            </View>
             <ThemedText type="title" style={styles.streakNumber}>
               {longest}
             </ThemedText>
@@ -253,17 +320,28 @@ export default function HabitDetailScreen() {
         </View>
       </ScrollView>
 
-      {isCurrentMonth ? null : (
-        <Pressable
-          style={[styles.todayFab, { backgroundColor: theme.text }]}
-          onPress={() => {
-            resetToMonth(new Date());
-            setSelectedDate(null);
-          }}>
-          <Ionicons name="today-outline" size={22} color={theme.background} />
-        </Pressable>
-      )}
+      <JumpToTodayButton
+        visible={!isCurrentMonth}
+        aboveTabBar={false}
+        onPress={() => {
+          resetToMonth(new Date());
+          setSelectedDate(null);
+        }}
+      />
     </ThemedView>
+  );
+}
+
+function CountTile({ label, value }: { label: string; value: number }) {
+  const theme = useTheme();
+  const display = useCountUp(value);
+  return (
+    <View style={[styles.tile, { backgroundColor: theme.backgroundElement, borderColor: theme.border }]}>
+      <ThemedText style={styles.tileValue}>{display}</ThemedText>
+      <ThemedText type="small" themeColor="textSecondary">
+        {label}
+      </ThemedText>
+    </View>
   );
 }
 
@@ -275,11 +353,12 @@ interface MonthGridProps {
   color: string;
   todayStr: string;
   selectedDate: string | null;
+  justStamped: string | null;
   onDayPress: (dateStr: string) => void;
 }
 
 /** The DayStamps signature visual: consecutive checked days in the same week merge into one connected pill. */
-function MonthGrid({ month, checkedDates, washedDates, color, todayStr, selectedDate, onDayPress }: MonthGridProps) {
+function MonthGrid({ month, checkedDates, washedDates, color, todayStr, selectedDate, justStamped, onDayPress }: MonthGridProps) {
   const theme = useTheme();
   const weeks = useMemo(() => {
     const gridStart = startOfWeek(startOfMonth(month), { weekStartsOn: 0 });
@@ -307,7 +386,9 @@ function MonthGrid({ month, checkedDates, washedDates, color, todayStr, selected
             return (
               <View key={dateStr} style={styles.dayCell}>
                 <Pressable disabled={isFuture} onPress={() => onDayPress(dateStr)} style={styles.dayCellPressable}>
-                  <View
+                  <Animated.View
+                    key={isChecked && justStamped === dateStr ? 'stamped' : 'idle'}
+                    entering={isChecked && justStamped === dateStr ? ZoomIn.springify().damping(11).stiffness(260) : undefined}
                     style={[
                       styles.dayPill,
                       isChecked && {
@@ -319,7 +400,7 @@ function MonthGrid({ month, checkedDates, washedDates, color, todayStr, selected
                         borderTopRightRadius: nextChecked ? 0 : 999,
                         borderBottomRightRadius: nextChecked ? 0 : 999,
                       },
-                      !isChecked && isToday && { borderWidth: 1.5, borderColor: theme.textSecondary, borderRadius: 999 },
+                      !isChecked && isToday && { borderWidth: 1.5, borderColor: color, borderRadius: 999 },
                       isSelected && { borderWidth: 2, borderColor: theme.text, borderRadius: 999 },
                     ]}>
                     <ThemedText
@@ -337,7 +418,7 @@ function MonthGrid({ month, checkedDates, washedDates, color, todayStr, selected
                     {isChecked && washedDates.has(dateStr) ? (
                       <Ionicons name="water" size={9} color="#FFFFFF" style={styles.washDrop} />
                     ) : null}
-                  </View>
+                  </Animated.View>
                 </Pressable>
               </View>
             );
@@ -350,42 +431,46 @@ function MonthGrid({ month, checkedDates, washedDates, color, todayStr, selected
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scroll: { padding: SCREEN_PADDING, gap: 16 },
-  card: { borderRadius: 20, padding: CARD_HORIZONTAL_PADDING },
+  editButton: {
+    marginRight: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  scroll: { padding: SCREEN_PADDING, paddingTop: 8, gap: 16 },
+  hero: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingVertical: 4 },
+  heroIcon: { width: 64, height: 64, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  heroEmoji: { fontSize: 32, lineHeight: 40 },
+  heroText: { flex: 1, gap: 6 },
+  heroName: { fontSize: 24, lineHeight: 30, fontFamily: 'NotoSansKR_700Bold', letterSpacing: -0.5 },
+  heroMeta: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  heroChip: { flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 10, paddingHorizontal: 8, paddingVertical: 3 },
+  heroChipText: { fontSize: 12, lineHeight: 16 },
+  card: { borderRadius: 24, borderWidth: 1, padding: CARD_HORIZONTAL_PADDING },
   monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  monthCount: { textAlign: 'center', marginTop: 8 },
+  navButton: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  monthCount: { textAlign: 'center', marginTop: 10 },
   weekRow: { flexDirection: 'row' },
   dayCell: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center' },
   dayCellPressable: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' },
   dayPill: { flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center', borderRadius: 999 },
-  checkedDayText: { color: '#FFFFFF', fontWeight: '700' },
+  checkedDayText: { color: '#FFFFFF', fontFamily: 'NotoSansKR_700Bold' },
   washDrop: { position: 'absolute', top: 4, right: 8 },
   washRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, marginTop: 10 },
   washChip: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
-  streakRow: { flexDirection: 'row', gap: 12 },
-  streakCard: { flex: 1, borderRadius: 20, padding: 16, gap: 6 },
+  streakRow: { flexDirection: 'row', gap: 10 },
+  streakCard: { flex: 1, borderRadius: 22, borderWidth: 1, padding: 16, gap: 6 },
   streakLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  recordBadge: { backgroundColor: '#E85D75', borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
-  recordBadgeText: { color: '#FFFFFF' },
-  streakNumber: { fontSize: 36, lineHeight: 40 },
+  recordBadge: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 },
+  recordBadgeText: { color: '#FFFFFF', fontSize: 10.5, lineHeight: 15, fontFamily: 'NotoSansKR_700Bold' },
+  streakNumber: { fontSize: 36, lineHeight: 42, letterSpacing: -0.8 },
   statisticSection: { gap: 8 },
   statisticTitle: { marginLeft: 4 },
-  tileRow: { flexDirection: 'row', gap: 10 },
-  tile: { flex: 1, borderRadius: 16, paddingVertical: 14, alignItems: 'center', gap: 2 },
-  tileValue: { fontSize: 24, lineHeight: 28 },
-  todayFab: {
-    position: 'absolute',
-    right: 20,
-    bottom: 24,
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 4,
-  },
+  tileRow: { flexDirection: 'row', gap: 8 },
+  tile: { flex: 1, borderRadius: 18, borderWidth: 1, paddingVertical: 14, alignItems: 'center', gap: 2 },
+  tileValue: { fontSize: 22, lineHeight: 28, fontFamily: 'NotoSansKR_700Bold', letterSpacing: -0.4 },
 });
