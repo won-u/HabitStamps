@@ -17,7 +17,7 @@ interface Props {
 export function MonthSlideTrack({ panes, containerWidth, viewportHeight, panGesture, trackStyle, renderMonth }: Props) {
   return (
     <View style={[styles.viewport, { width: containerWidth, height: viewportHeight }]}>
-      <GestureDetector gesture={panGesture}>
+      <GestureDetector gesture={panGesture} touchAction="pan-y">
         <Animated.View style={[styles.track, { width: containerWidth * 3 }, trackStyle]}>
           {panes.map((paneMonth) => (
             <View key={format(paneMonth, 'yyyy-MM')} style={{ width: containerWidth }}>

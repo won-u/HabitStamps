@@ -268,7 +268,7 @@ export default function StatsScreen() {
           {groups.length === 0 ? (
             <ThemedText themeColor="textSecondary">습관을 만들면 리포트가 여기 표시돼요</ThemedText>
           ) : mode === 'weekly' ? (
-            <GestureDetector gesture={weekTransition.panGesture}>
+            <GestureDetector gesture={weekTransition.panGesture} touchAction="pan-y">
               <Animated.View style={weekTransition.animatedStyle}>
                 {groups.map((group) => (
                   <View key={group.key} style={styles.groupSection}>
@@ -329,7 +329,7 @@ export default function StatsScreen() {
               </Animated.View>
             </GestureDetector>
           ) : mode === 'monthly' ? (
-            <GestureDetector gesture={monthTransition.panGesture}>
+            <GestureDetector gesture={monthTransition.panGesture} touchAction="pan-y">
               <Animated.View style={monthTransition.animatedStyle}>
                 {groups.map((group) => (
                   <View key={group.key} style={styles.groupSection}>
@@ -352,7 +352,7 @@ export default function StatsScreen() {
               </Animated.View>
             </GestureDetector>
           ) : (
-            <GestureDetector gesture={yearTransition.panGesture}>
+            <GestureDetector gesture={yearTransition.panGesture} touchAction="pan-y">
               <Animated.View style={yearTransition.animatedStyle}>
                 {groups.map((group) => (
                   <View key={group.key} style={styles.groupSection}>
