@@ -75,7 +75,7 @@ describe("calculateStreak — weekdays (Mon/Wed/Fri)", () => {
     // Mon 07-27, Wed 07-29, Fri 07-31, Mon 08-03, Wed 08-05, Fri 08-07, Mon 08-10, Wed 08-12 (today).
     const dates = ["2026-07-27", "2026-07-29", "2026-07-31", "2026-08-03", "2026-08-05", "2026-08-07", "2026-08-10", "2026-08-12"];
     const result = calculateStreak(dates, "2026-08-12", "weekdays", config);
-    expect(result.current).toBe(17); // day-span 07-27..08-12, gaps included
+    expect(result.current).toBe(8); // check-ins in 07-27..08-12, not its 17-day span
     expect(result.currentRange).toEqual({ start: "2026-07-27", end: "2026-08-12" });
   });
 
@@ -84,14 +84,14 @@ describe("calculateStreak — weekdays (Mon/Wed/Fri)", () => {
     // (Thu, unscheduled) since only 08-05 itself was a required-and-missed day.
     const dates = ["2026-07-27", "2026-07-29", "2026-07-31", "2026-08-03", "2026-08-07", "2026-08-10", "2026-08-12"];
     const result = calculateStreak(dates, "2026-08-12", "weekdays", config);
-    expect(result.current).toBe(7); // 08-06..08-12
+    expect(result.current).toBe(3); // 08-07, 08-10, 08-12 within 08-06..08-12
     expect(result.currentRange).toEqual({ start: "2026-08-06", end: "2026-08-12" });
   });
 
   it("extends the streak through an unscheduled today without requiring a check-in", () => {
     // today = Tue 2026-08-11 (not scheduled); Mon 08-10 was checked.
     const result = calculateStreak(["2026-08-10"], "2026-08-11", "weekdays", config);
-    expect(result.current).toBe(2); // 08-10, 08-11
+    expect(result.current).toBe(1); // the 08-10 check-in; the range runs through unscheduled 08-11
     expect(result.currentRange).toEqual({ start: "2026-08-10", end: "2026-08-11" });
   });
 
@@ -100,7 +100,7 @@ describe("calculateStreak — weekdays (Mon/Wed/Fri)", () => {
     // and is the *only* check-in this habit has — there's no data before it to
     // justify counting further back through 08-09/08-08.
     const result = calculateStreak(["2026-08-10"], "2026-08-12", "weekdays", config);
-    expect(result.current).toBe(2); // 08-10(Mon, checked)..08-11(Tue, unscheduled)
+    expect(result.current).toBe(1); // 08-10(Mon, checked)..08-11(Tue, unscheduled)
     expect(result.currentRange).toEqual({ start: "2026-08-10", end: "2026-08-11" });
   });
 
@@ -125,7 +125,7 @@ describe("calculateStreak — timesPerWeek", () => {
     // This week (Sun 08-09..Sat 08-15, today = Wed 08-12): 1 check-in so far.
     const dates = ["2026-08-03", "2026-08-05", "2026-08-07", "2026-08-11"];
     const result = calculateStreak(dates, "2026-08-12", "timesPerWeek", config);
-    expect(result.current).toBe(11); // 08-02..08-12
+    expect(result.current).toBe(4); // check-ins in 08-02..08-12
     expect(result.currentRange).toEqual({ start: "2026-08-02", end: "2026-08-12" });
   });
 
@@ -133,7 +133,7 @@ describe("calculateStreak — timesPerWeek", () => {
     // Last week only has 2 check-ins (target 3) — streak resets to this week's progress only.
     const dates = ["2026-08-03", "2026-08-05", "2026-08-11"];
     const result = calculateStreak(dates, "2026-08-12", "timesPerWeek", config);
-    expect(result.current).toBe(4); // this week's start (08-09) .. today (08-12)
+    expect(result.current).toBe(1); // 08-11, within this week's start (08-09) .. today (08-12)
     expect(result.currentRange).toEqual({ start: "2026-08-09", end: "2026-08-12" });
   });
 
@@ -150,8 +150,8 @@ describe("calculateStreak — timesPerWeek", () => {
     // isn't over, it doesn't break the chain, so current stays alive through today.
     const dates = ["2026-07-19", "2026-07-21", "2026-07-23", "2026-07-26", "2026-07-28", "2026-07-30", "2026-08-02", "2026-08-04", "2026-08-06"];
     const result = calculateStreak(dates, "2026-08-12", "timesPerWeek", config);
-    expect(result.current).toBe(25); // 07-19..08-12
-    expect(result.longest).toBe(25); // the live streak is now the record too
+    expect(result.current).toBe(9); // check-ins in 07-19..08-12
+    expect(result.longest).toBe(9); // the live streak is now the record too
     expect(result.longestRange).toEqual({ start: "2026-07-19", end: "2026-08-12" });
   });
 
@@ -173,8 +173,23 @@ describe("calculateStreak — timesPerWeek", () => {
     ];
     const result = calculateStreak(dates, "2026-08-19", "timesPerWeek", config);
     expect(result.current).toBe(0);
-    expect(result.longest).toBe(21); // 07-19..08-08
+    expect(result.longest).toBe(9); // 3 weeks × 3 in 07-19..08-08
     expect(result.longestRange).toEqual({ start: "2026-07-19", end: "2026-08-08" });
+  });
+});
+
+describe("calculateStreak — timesPerWeek counts check-ins, not days", () => {
+  it("3/week kept for 4 full weeks reads as 12 plus any extra check-ins, not 28", () => {
+    // Weeks Sun 07-12, 07-19, 07-26, 08-02 — 3 each, plus a 4th in the last one.
+    const dates = [
+      "2026-07-13", "2026-07-15", "2026-07-17",
+      "2026-07-20", "2026-07-22", "2026-07-24",
+      "2026-07-27", "2026-07-29", "2026-07-31",
+      "2026-08-03", "2026-08-05", "2026-08-07", "2026-08-08",
+    ];
+    const result = calculateStreak(dates, "2026-08-16", "timesPerWeek", { timesPerWeek: 3 });
+    expect(result.longest).toBe(13);
+    expect(result.longestRange).toEqual({ start: "2026-07-12", end: "2026-08-08" });
   });
 });
 
@@ -188,7 +203,7 @@ describe("calculateStreak — timesPerMonth", () => {
     // target is met, the same way a qualifying week does.
     const dates = ["2026-07-10", "2026-07-20", "2026-08-05"];
     const result = calculateStreak(dates, "2026-08-12", "timesPerMonth", config);
-    expect(result.current).toBe(daysBetween("2026-07-01", "2026-08-12"));
+    expect(result.current).toBe(3);
     expect(result.currentRange).toEqual({ start: "2026-07-01", end: "2026-08-12" });
   });
 
@@ -198,11 +213,3 @@ describe("calculateStreak — timesPerMonth", () => {
     expect(result.currentRange).toEqual({ start: "2026-08-01", end: "2026-08-12" });
   });
 });
-
-function daysBetween(startStr: string, endStr: string): number {
-  const s = startStr.split("-").map(Number) as [number, number, number];
-  const e = endStr.split("-").map(Number) as [number, number, number];
-  const start = Date.UTC(s[0], s[1] - 1, s[2]);
-  const end = Date.UTC(e[0], e[1] - 1, e[2]);
-  return Math.round((end - start) / 86_400_000) + 1;
-}

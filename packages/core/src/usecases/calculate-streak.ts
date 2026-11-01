@@ -27,14 +27,6 @@ function dayOfWeek(dateStr: string): number {
   return new Date(Date.UTC(parts[0]!, parts[1]! - 1, parts[2]!)).getUTCDay();
 }
 
-function daysBetweenInclusive(startStr: string, endStr: string): number {
-  const s = startStr.split("-").map(Number);
-  const e = endStr.split("-").map(Number);
-  const start = Date.UTC(s[0]!, s[1]! - 1, s[2]!);
-  const end = Date.UTC(e[0]!, e[1]! - 1, e[2]!);
-  return Math.round((end - start) / 86_400_000) + 1;
-}
-
 /** 0 = Sunday ... 6 = Saturday, matching `FrequencyConfig.weekdays`. Empty/missing config degrades to "every day required" rather than "no day ever required" — the latter would never break a streak and could walk backward without bound. */
 function isScheduledDay(dateStr: string, weekdays: readonly number[] | undefined): boolean {
   if (!weekdays || weekdays.length === 0) return true;
@@ -47,9 +39,9 @@ const EMPTY_RESULT: StreakResult = { current: 0, longest: 0, currentRange: null,
  * Streak for "daily" and "weekdays" habits: continuity is measured day by
  * day, but a day that isn't on the habit's schedule (e.g. Tuesday for a
  * Mon/Wed/Fri habit) is skipped rather than required — it neither breaks nor
- * requires a check-in. `current`/`longest` count the calendar day-span of the
- * streak (schedule gaps included), so a Mon/Wed/Fri habit kept for three
- * weeks reads as "17 days", not "9 check-ins".
+ * requires a check-in. `current`/`longest` count the check-ins inside the
+ * streak (an extra check-in on an unscheduled day counts too), so a
+ * Mon/Wed/Fri habit kept for three weeks reads as 9, not as its 17-day span.
  */
 function calculateScheduleStreak(checkInDates: readonly string[], today: string, weekdays: readonly number[] | undefined): StreakResult {
   const dateSet = new Set(checkInDates);
@@ -63,13 +55,15 @@ function calculateScheduleStreak(checkInDates: readonly string[], today: string,
   // instead, same tolerance as the original daily-only algorithm.
   const currentEnd = !dateSet.has(today) && scheduled(today) ? addDays(today, -1) : today;
   let current = 0;
+  let span = 0;
   let cursor = currentEnd;
   while (cursor >= earliest) {
     if (scheduled(cursor) && !dateSet.has(cursor)) break;
-    current += 1;
+    if (dateSet.has(cursor)) current += 1;
+    span += 1;
     cursor = addDays(cursor, -1);
   }
-  const currentRange: StreakRange | null = current > 0 ? { start: addDays(currentEnd, -(current - 1)), end: currentEnd } : null;
+  const currentRange: StreakRange | null = current > 0 ? { start: addDays(currentEnd, -(span - 1)), end: currentEnd } : null;
 
   // `longest`: single forward pass over the recorded history (never past the
   // last actual check-in — "today" is deliberately excluded here so an
@@ -87,15 +81,17 @@ function calculateScheduleStreak(checkInDates: readonly string[], today: string,
       runStart = null;
       continue;
     }
-    if (run === 0) runStart = cursor2;
-    run += 1;
+    if (runStart === null) runStart = cursor2;
+    if (dateSet.has(cursor2)) run += 1;
     if (run > longest) {
       longest = run;
       longestRange = { start: runStart!, end: cursor2 };
     }
   }
 
-  if (current > longest) {
+  // `>=`: the live run usually *is* the run the forward scan just measured
+  // (counts tie), and its range should reach today.
+  if (current > 0 && current >= longest) {
     longest = current;
     longestRange = currentRange;
   }
@@ -127,8 +123,9 @@ function monthBounds(dateStr: string): PeriodBounds {
  * period breaks the streak if it didn't reach `target` check-ins, but the
  * period containing `today` is never judged as failing (it isn't over yet),
  * mirroring the schedule algorithm's "don't fail today" tolerance. As with
- * `calculateScheduleStreak`, the displayed `current`/`longest` are the day-span
- * of the qualifying periods, not a count of periods.
+ * `calculateScheduleStreak`, `current`/`longest` are the check-ins inside the
+ * qualifying periods (3/week kept for 4 weeks = 12, plus any extras), not
+ * their day-span or a count of periods.
  */
 function calculatePeriodStreak(checkInDates: readonly string[], today: string, periodBounds: (date: string) => PeriodBounds, target: number): StreakResult {
   const dateSet = new Set(checkInDates);
@@ -155,7 +152,7 @@ function calculatePeriodStreak(checkInDates: readonly string[], today: string, p
   }
 
   const hasProgress = chainStart < todayPeriod.start || currentPeriodProgress > 0;
-  const current = hasProgress ? daysBetweenInclusive(chainStart, today) : 0;
+  const current = hasProgress ? countInRange(chainStart, today) : 0;
   const currentRange: StreakRange | null = hasProgress ? { start: chainStart, end: today } : null;
 
   // `longest`: forward scan over fully-elapsed periods only (through the
@@ -166,22 +163,27 @@ function calculatePeriodStreak(checkInDates: readonly string[], today: string, p
   let longest = 0;
   let longestRange: StreakRange | null = null;
   let runStart: string | null = null;
+  let runCount = 0;
   let period = periodBounds(earliest);
   while (period.start <= lastCheckIn) {
-    if (countInRange(period.start, period.end) >= target) {
+    const periodCount = countInRange(period.start, period.end);
+    if (periodCount >= target) {
       if (!runStart) runStart = period.start;
-      const span = daysBetweenInclusive(runStart, period.end);
-      if (span > longest) {
-        longest = span;
+      runCount += periodCount;
+      if (runCount > longest) {
+        longest = runCount;
         longestRange = { start: runStart, end: period.end };
       }
     } else {
       runStart = null;
+      runCount = 0;
     }
     period = periodBounds(addDays(period.end, 1));
   }
 
-  if (current > longest) {
+  // `>=`: the live run usually *is* the run the forward scan just measured
+  // (counts tie), and its range should reach today.
+  if (current > 0 && current >= longest) {
     longest = current;
     longestRange = currentRange;
   }
@@ -204,9 +206,10 @@ function calculatePeriodStreak(checkInDates: readonly string[], today: string, p
  * - `timesPerWeek`/`timesPerMonth`: no specific day is required, only a
  *   per-period total — see `calculatePeriodStreak`.
  *
- * In every case, `current`/`longest` are a day-span (matching the habit's
- * own `currentRange`/`longestRange`), not a count of check-ins or periods,
- * so the numbers stay comparable across frequency types.
+ * In every case, `current`/`longest` count the check-ins inside the streak
+ * (`currentRange`/`longestRange` give its dates). For a daily habit that is
+ * the same as its length in days; for the others it is what was actually
+ * done — 3/week kept for 4 weeks reads as 12 (+ extras), not 28 days.
  */
 export function calculateStreak(
   checkInDates: readonly string[],

@@ -254,7 +254,7 @@ export default function StatsScreen() {
                       </View>
                       <ProgressBar progress={item.completionRate / 100} color={item.habit.color} delay={index * 50} />
                       <ThemedText themeColor="textSecondary" type="small" style={styles.rowMeta}>
-                        🔥 현재 {item.currentStreak} · 최장 {item.longestStreak}
+                        🔥 현재 {item.currentStreak}회 · 최장 {item.longestStreak}회
                       </ThemedText>
                     </View>
                   </Animated.View>

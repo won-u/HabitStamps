@@ -284,6 +284,14 @@ export default function HabitDetailScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 현재 스트릭
               </ThemedText>
+            </View>
+            <View style={styles.streakNumberRow}>
+              <ThemedText type="title" style={[styles.streakNumber, { color: habit.color }]}>
+                {current}
+                <ThemedText type="smallBold" themeColor="textSecondary">
+                  {' '}회
+                </ThemedText>
+              </ThemedText>
               {isCurrentStreakRecord ? (
                 <View style={[styles.recordBadge, { backgroundColor: theme.danger }]}>
                   <ThemedText type="small" style={styles.recordBadgeText}>
@@ -292,9 +300,6 @@ export default function HabitDetailScreen() {
                 </View>
               ) : null}
             </View>
-            <ThemedText type="title" style={[styles.streakNumber, { color: habit.color }]}>
-              {current}
-            </ThemedText>
             {currentRange ? (
               <ThemedText type="small" themeColor="textSecondary">
                 {formatRange(currentRange)}
@@ -310,6 +315,9 @@ export default function HabitDetailScreen() {
             </View>
             <ThemedText type="title" style={styles.streakNumber}>
               {longest}
+              <ThemedText type="smallBold" themeColor="textSecondary">
+                {' '}회
+              </ThemedText>
             </ThemedText>
             {longestRange ? (
               <ThemedText type="small" themeColor="textSecondary">
@@ -465,6 +473,7 @@ const styles = StyleSheet.create({
   streakRow: { flexDirection: 'row', gap: 10 },
   streakCard: { flex: 1, borderRadius: 22, borderWidth: 1, padding: 16, gap: 6 },
   streakLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  streakNumberRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 6 },
   recordBadge: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 1 },
   recordBadgeText: { color: '#FFFFFF', fontSize: 10.5, lineHeight: 15, fontFamily: 'NotoSansKR_700Bold' },
   streakNumber: { fontSize: 36, lineHeight: 42, letterSpacing: -0.8 },
