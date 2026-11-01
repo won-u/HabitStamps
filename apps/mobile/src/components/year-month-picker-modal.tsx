@@ -20,6 +20,14 @@ interface Props {
 export function YearMonthPickerModal({ visible, initialYear, initialMonth, onClose, onSelect }: Props) {
   const theme = useTheme();
   const [year, setYear] = useState(initialYear);
+  // The modal stays mounted between openings: start each opening on the
+  // year being viewed, not the one browsed to last time.
+  const [wasVisible, setWasVisible] = useState(visible);
+  if (visible !== wasVisible) {
+    setWasVisible(visible);
+    if (visible) setYear(initialYear);
+  }
+  const now = new Date();
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -27,11 +35,11 @@ export function YearMonthPickerModal({ visible, initialYear, initialMonth, onClo
         <Animated.View entering={FadeInDown.springify().damping(17)}>
         <Pressable style={[styles.card, { backgroundColor: theme.backgroundElement }]} onPress={(e) => e.stopPropagation()}>
           <View style={styles.header}>
-            <Pressable onPress={() => setYear((y) => y - 1)} hitSlop={8}>
+            <Pressable onPress={() => setYear((y) => y - 1)} hitSlop={8} accessibilityLabel="이전 해">
               <Ionicons name="chevron-back" size={20} color={theme.text} />
             </Pressable>
             <ThemedText type="smallBold">{year}년</ThemedText>
-            <Pressable onPress={() => setYear((y) => y + 1)} hitSlop={8}>
+            <Pressable onPress={() => setYear((y) => y + 1)} hitSlop={8} accessibilityLabel="다음 해">
               <Ionicons name="chevron-forward" size={20} color={theme.text} />
             </Pressable>
           </View>
@@ -39,6 +47,7 @@ export function YearMonthPickerModal({ visible, initialYear, initialMonth, onClo
           <View style={styles.grid}>
             {MONTH_LABELS.map((label, month) => {
               const isSelected = year === initialYear && month === initialMonth;
+              const isThisMonth = year === now.getFullYear() && month === now.getMonth();
               return (
                 <Pressable
                   key={label}
@@ -46,9 +55,11 @@ export function YearMonthPickerModal({ visible, initialYear, initialMonth, onClo
                     onSelect(year, month);
                     onClose();
                   }}
+                  accessibilityLabel={`${year}년 ${label}`}
                   style={[
                     styles.monthCell,
                     { backgroundColor: isSelected ? theme.text : theme.backgroundSelected },
+                    isThisMonth && !isSelected ? { borderColor: theme.accent } : null,
                   ]}>
                   <ThemedText style={{ color: isSelected ? theme.background : theme.text }}>{label}</ThemedText>
                 </Pressable>
@@ -67,5 +78,12 @@ const styles = StyleSheet.create({
   card: { borderRadius: 26, padding: 16, boxShadow: '0px 20px 50px rgba(0,0,0,0.25)' },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
   grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  monthCell: { width: '30%', paddingVertical: 16, borderRadius: 14, alignItems: 'center' },
+  monthCell: {
+    width: '30%',
+    paddingVertical: 16,
+    borderRadius: 14,
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: 'transparent',
+  },
 });

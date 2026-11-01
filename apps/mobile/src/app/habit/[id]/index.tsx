@@ -21,6 +21,7 @@ import { ThemedView } from '@/components/themed-view';
 import { useTheme } from '@/hooks/use-theme';
 import { useMonthSlideCarousel } from '@/hooks/use-month-slide-carousel';
 import { MonthSlideTrack } from '@/components/month-slide-track';
+import { YearMonthPickerModal } from '@/components/year-month-picker-modal';
 import { DenimCard } from '@/components/denim-card';
 import { habitRepository, checkInRepository } from '@/composition/container';
 import { PressableScale } from '@/components/ui/pressable-scale';
@@ -61,6 +62,7 @@ export default function HabitDetailScreen() {
   const [habit, setHabit] = useState<Habit | null>(null);
   const [checkIns, setCheckIns] = useState<readonly CheckIn[]>([]);
   const [month, setMonth] = useState(new Date());
+  const [pickerVisible, setPickerVisible] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   // The day whose stamp was just toggled on — only that cell plays the
   // "stamp" pop-in, so opening the screen doesn't animate every past stamp.
@@ -183,7 +185,15 @@ export default function HabitDetailScreen() {
               style={[styles.navButton, { backgroundColor: theme.backgroundSelected }]}>
               <Ionicons name="chevron-back" size={16} color={theme.text} />
             </PressableScale>
-            <ThemedText type="smallBold">{format(month, 'yyyy년 M월', { locale: ko })}</ThemedText>
+            <Pressable
+              onPress={() => setPickerVisible(true)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={`${format(month, 'yyyy년 M월')}, 년월 선택`}
+              style={styles.monthTitle}>
+              <ThemedText type="smallBold">{format(month, 'yyyy년 M월', { locale: ko })}</ThemedText>
+              <Ionicons name="chevron-down" size={14} color={theme.textSecondary} />
+            </Pressable>
             <PressableScale
               hapticKind="selection"
               accessibilityLabel="다음 달"
@@ -323,6 +333,17 @@ export default function HabitDetailScreen() {
         </View>
       </ScrollView>
 
+      <YearMonthPickerModal
+        visible={pickerVisible}
+        initialYear={month.getFullYear()}
+        initialMonth={month.getMonth()}
+        onClose={() => setPickerVisible(false)}
+        onSelect={(year, monthIndex) => {
+          resetToMonth(new Date(year, monthIndex, 1));
+          setSelectedDate(null);
+        }}
+      />
+
       <JumpToTodayButton
         visible={!isCurrentMonth}
         aboveTabBar={false}
@@ -456,6 +477,7 @@ const styles = StyleSheet.create({
   card: { borderRadius: 24, borderWidth: 1, padding: CARD_HORIZONTAL_PADDING },
   monthHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   navButton: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
+  monthTitle: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingHorizontal: 8 },
   monthCount: { textAlign: 'center', marginTop: 10 },
   weekRow: { flexDirection: 'row' },
   dayCell: { flex: 1, aspectRatio: 1, alignItems: 'center', justifyContent: 'center' },
