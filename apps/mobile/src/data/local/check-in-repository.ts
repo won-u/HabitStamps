@@ -1,6 +1,7 @@
 import { and, between, desc, eq, isNotNull, isNull, or } from "drizzle-orm";
 import { randomUUID } from "expo-crypto";
 import type {
+  PushedRow,
   CheckIn,
   CheckInRepository,
   CreateCheckInInput,
@@ -165,9 +166,12 @@ export class LocalCheckInRepository implements CheckInRepository {
     return rows.map(toCheckIn);
   }
 
-  async markSynced(ids: readonly string[], _syncedAt: string): Promise<void> {
-    for (const id of ids) {
-      await db.update(checkIns).set({ syncStatus: "synced" }).where(eq(checkIns.id, id));
+  async markSynced(rows: readonly PushedRow[], _syncedAt: string): Promise<void> {
+    for (const { id, version } of rows) {
+      await db
+        .update(checkIns)
+        .set({ syncStatus: "synced" })
+        .where(and(eq(checkIns.id, id), eq(checkIns.version, version)));
     }
   }
 

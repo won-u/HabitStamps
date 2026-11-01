@@ -16,9 +16,17 @@ interface SettingsState {
    * behavior) until the user drags it somewhere else.
    */
   defaultGroupSortOrder: number;
+  /**
+   * Which pull logic `lastSyncedAt` was recorded under. When the pull itself
+   * changes in a way that means earlier pulls may have missed rows, bumping
+   * SYNC_FORMAT in composition/container.ts makes every device do one full
+   * pull from scratch instead of trusting its old watermark.
+   */
+  syncFormat: number;
   setColorSchemePreference: (pref: ColorSchemePreference) => void;
   setLastSyncedAt: (iso: string | null) => void;
   setDefaultGroupSortOrder: (order: number) => void;
+  setSyncFormat: (format: number) => void;
 }
 
 export const useSettingsStore = create<SettingsState>()(
@@ -27,9 +35,11 @@ export const useSettingsStore = create<SettingsState>()(
       colorSchemePreference: "system",
       lastSyncedAt: null,
       defaultGroupSortOrder: -1,
+      syncFormat: 1,
       setColorSchemePreference: (colorSchemePreference) => set({ colorSchemePreference }),
       setLastSyncedAt: (lastSyncedAt) => set({ lastSyncedAt }),
       setDefaultGroupSortOrder: (defaultGroupSortOrder) => set({ defaultGroupSortOrder }),
+      setSyncFormat: (syncFormat) => set({ syncFormat }),
     }),
     {
       // expo-secure-store's web implementation is a no-op ({} exported as

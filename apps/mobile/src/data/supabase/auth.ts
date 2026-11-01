@@ -34,16 +34,17 @@ function parseTokensFromRedirectUrl(url: string): { accessToken: string; refresh
  * `signInWithGoogle`'s own `setSession` call never runs (its whole call
  * stack got replaced by the fresh page load), but the tokens are still
  * sitting in this page's own URL — so `auth-callback.tsx` calls this on
- * mount to pick them up directly.
+ * mount to pick them up directly. Resolves true when it signed in.
  */
-export async function completeWebRedirectSignIn(supabase: SupabaseClient): Promise<void> {
+export async function completeWebRedirectSignIn(supabase: SupabaseClient): Promise<boolean> {
   const tokens = parseTokensFromRedirectUrl(window.location.href);
-  if (!tokens) return;
+  if (!tokens) return false;
   const { error } = await supabase.auth.setSession({
     access_token: tokens.accessToken,
     refresh_token: tokens.refreshToken,
   });
   if (error) throw error;
+  return true;
 }
 
 export async function signInWithGoogle(supabase: SupabaseClient): Promise<void> {

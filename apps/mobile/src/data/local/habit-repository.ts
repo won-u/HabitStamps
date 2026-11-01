@@ -1,6 +1,7 @@
-import { asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { randomUUID } from "expo-crypto";
 import type {
+  PushedRow,
   CreateHabitInput,
   Habit,
   HabitRepository,
@@ -90,9 +91,12 @@ export class LocalHabitRepository implements HabitRepository {
     return rows.map(toHabit);
   }
 
-  async markSynced(ids: readonly string[], _syncedAt: string): Promise<void> {
-    for (const id of ids) {
-      await db.update(habits).set({ syncStatus: "synced" }).where(eq(habits.id, id));
+  async markSynced(rows: readonly PushedRow[], _syncedAt: string): Promise<void> {
+    for (const { id, version } of rows) {
+      await db
+        .update(habits)
+        .set({ syncStatus: "synced" })
+        .where(and(eq(habits.id, id), eq(habits.version, version)));
     }
   }
 

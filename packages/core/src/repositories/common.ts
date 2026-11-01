@@ -1,3 +1,9 @@
+/** Identifies exactly which local write a push sent. */
+export interface PushedRow {
+  id: string;
+  version: number;
+}
+
 /** A push-based subscription to a query result, used by local-first "observe" reads. */
 export interface Observable<T> {
   subscribe(callback: (value: T) => void): () => void;
@@ -16,8 +22,14 @@ export interface SyncableRepository<TEntity, TCreateInput, TUpdateInput> {
   softDelete(id: string): Promise<void>;
   /** Rows with syncStatus === 'pending', used by the sync engine to build a push payload. */
   findPendingSync(): Promise<TEntity[]>;
-  /** Marks rows as syncStatus === 'synced' after a successful push. */
-  markSynced(ids: readonly string[], syncedAt: string): Promise<void>;
+  /**
+   * Marks pushed rows as syncStatus === 'synced' — but only a row still at
+   * the `version` that was pushed. A row written again while the push was in
+   * flight (e.g. a check-in toggled back off) has moved on to a newer
+   * version that the server has not seen, so it must stay 'pending';
+   * marking it synced by id alone silently dropped that write.
+   */
+  markSynced(rows: readonly PushedRow[], syncedAt: string): Promise<void>;
   /** Upserts rows received from a pull response into the local store. */
   applyRemoteChanges(rows: readonly TEntity[]): Promise<void>;
   /**

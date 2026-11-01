@@ -12,7 +12,13 @@ import type {
 import { emptyEntityChangeSet } from "@habit-tracker/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+/** Below Supabase's default 1000-row response cap, so a full page always means "maybe more". */
+const PULL_PAGE_SIZE = 500;
+/** How far each pull re-reads before the last watermark (see `pull`). */
+const PULL_OVERLAP_MS = 2 * 60 * 1000;
+
 interface HabitRow {
+  server_updated_at: string;
   id: string;
   name: string;
   icon: string;
@@ -30,6 +36,7 @@ interface HabitRow {
 }
 
 interface CheckInRow {
+  server_updated_at: string;
   id: string;
   habit_id: string;
   date: string;
@@ -45,6 +52,7 @@ interface CheckInRow {
 }
 
 interface CategoryRow {
+  server_updated_at: string;
   id: string;
   name: string;
   color: string;
@@ -177,29 +185,67 @@ export class SupabaseSyncGateway implements SyncGateway {
   async pull(sinceIso: string): Promise<SyncPullResult> {
     // The next pull's `since` is this call's returned serverTime, so it must
     // come from Postgres's clock (`sync_server_time()` RPC), not
-    // `new Date()` (this device's clock). If this device's clock runs ahead
-    // of real time, a client-clock watermark gets persisted into the future
-    // (`composition/container.ts`'s `runSync` stores it verbatim) — every
-    // subsequent `updated_at > since` pull query then permanently excludes
-    // rows other devices push at the real time, with no error surfaced
-    // (device clock drift causing a stuck "future" JWT `iat` has already
-    // been observed on this project's emulator, docs/architecture.md §5-4).
-    const [serverTimeResult, habitsResult, checkInsResult, categoriesResult] = await Promise.all([
-      this.client.rpc("sync_server_time"),
-      this.client.from("habits").select("*").gt("updated_at", sinceIso).order("updated_at"),
-      this.client.from("check_ins").select("*").gt("updated_at", sinceIso).order("updated_at"),
-      this.client.from("categories").select("*").gt("updated_at", sinceIso).order("updated_at"),
-    ]);
+    // `new Date()` (this device's clock) — see docs/architecture.md §5-4.
+    // Taken *before* the reads so nothing committed after it is skipped by
+    // the next pull.
+    const serverTimeResult = await this.client.rpc("sync_server_time");
     if (serverTimeResult.error) throw serverTimeResult.error;
-    if (habitsResult.error) throw habitsResult.error;
-    if (checkInsResult.error) throw checkInsResult.error;
-    if (categoriesResult.error) throw categoriesResult.error;
 
-    const habits = toEntityChangeSet(habitsResult.data as HabitRow[], rowToHabit);
-    const checkIns = toEntityChangeSet(checkInsResult.data as CheckInRow[], rowToCheckIn);
-    const categories = toEntityChangeSet(categoriesResult.data as CategoryRow[], rowToCategory);
+    // Filter on server_updated_at (set by a trigger with the server's
+    // clock), not updated_at: updated_at is the *writing device's* clock, so
+    // a change made offline (or on a device whose clock is behind) arrives
+    // with an updated_at older than this device's watermark and was skipped
+    // forever. Step the watermark back a little too — a write still in
+    // flight when the last pull ran can commit with an earlier
+    // server_updated_at. Re-reading a few rows is harmless: applying them
+    // is LWW and idempotent.
+    const since = new Date(new Date(sinceIso).getTime() - PULL_OVERLAP_MS).toISOString();
+    const [habitRows, checkInRows, categoryRows] = await Promise.all([
+      this.selectChangedSince<HabitRow>("habits", since),
+      this.selectChangedSince<CheckInRow>("check_ins", since),
+      this.selectChangedSince<CategoryRow>("categories", since),
+    ]);
+
+    const habits = toEntityChangeSet(habitRows, rowToHabit);
+    const checkIns = toEntityChangeSet(checkInRows, rowToCheckIn);
+    const categories = toEntityChangeSet(categoryRows, rowToCategory);
 
     return { serverTime: serverTimeResult.data as string, changes: { habits, checkIns, categories } };
+  }
+
+  /**
+   * Every row of `table` with server_updated_at > since, read in pages.
+   * PostgREST caps one response (Supabase's default "max rows" is 1000), so
+   * a single select silently dropped everything past the first 1000 rows —
+   * a first sync on a new device (or after reinstalling the PWA) never got
+   * the rest, and the watermark then moved past them. Keyset pagination on
+   * (server_updated_at, id) rather than offsets: a row updated while paging
+   * moves to the end instead of shifting the next page over a row.
+   */
+  private async selectChangedSince<TRow extends { id: string; server_updated_at: string }>(
+    table: "habits" | "check_ins" | "categories",
+    since: string,
+  ): Promise<TRow[]> {
+    const rows: TRow[] = [];
+    let cursor: { at: string; id: string } | null = null;
+    for (;;) {
+      let query = this.client
+        .from(table)
+        .select("*")
+        .order("server_updated_at", { ascending: true })
+        .order("id", { ascending: true })
+        .limit(PULL_PAGE_SIZE);
+      query = cursor
+        ? query.or(`server_updated_at.gt."${cursor.at}",and(server_updated_at.eq."${cursor.at}",id.gt.${cursor.id})`)
+        : query.gt("server_updated_at", since);
+      const { data, error } = await query;
+      if (error) throw error;
+      const page = (data ?? []) as TRow[];
+      rows.push(...page);
+      if (page.length < PULL_PAGE_SIZE) return rows;
+      const last = page[page.length - 1]!;
+      cursor = { at: last.server_updated_at, id: last.id };
+    }
   }
 }
 

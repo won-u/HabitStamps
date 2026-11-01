@@ -1,6 +1,7 @@
-import { asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 import { randomUUID } from "expo-crypto";
 import type {
+  PushedRow,
   Category,
   CategoryRepository,
   CreateCategoryInput,
@@ -84,9 +85,12 @@ export class LocalCategoryRepository implements CategoryRepository {
     return rows.map(toCategory);
   }
 
-  async markSynced(ids: readonly string[], _syncedAt: string): Promise<void> {
-    for (const id of ids) {
-      await db.update(categories).set({ syncStatus: "synced" }).where(eq(categories.id, id));
+  async markSynced(rows: readonly PushedRow[], _syncedAt: string): Promise<void> {
+    for (const { id, version } of rows) {
+      await db
+        .update(categories)
+        .set({ syncStatus: "synced" })
+        .where(and(eq(categories.id, id), eq(categories.version, version)));
     }
   }
 

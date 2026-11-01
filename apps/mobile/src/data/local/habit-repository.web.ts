@@ -1,4 +1,5 @@
 import type {
+  PushedRow,
   CreateHabitInput,
   Habit,
   HabitRepository,
@@ -99,11 +100,11 @@ export class LocalHabitRepository implements HabitRepository {
     return rows.map(toHabit);
   }
 
-  async markSynced(ids: readonly string[], _syncedAt: string): Promise<void> {
+  async markSynced(rows: readonly PushedRow[], _syncedAt: string): Promise<void> {
     const db = await getWebDb();
-    for (const id of ids) {
+    for (const { id, version } of rows) {
       const existing = await db.get("habits", id);
-      if (existing) await db.put("habits", { ...existing, syncStatus: "synced" });
+      if (existing && existing.version === version) await db.put("habits", { ...existing, syncStatus: "synced" });
     }
   }
 

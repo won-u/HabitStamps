@@ -9,10 +9,13 @@ import { getSupabaseClient } from "@/data/supabase/client";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "@/constants/supabase";
 import { useSettingsStore } from "@/state/settings-store";
 
-const MUTATING_METHODS = new Set(["create", "update", "softDelete"]);
+// `toggle` is the check-in tap itself: it writes through its own internal
+// create/soft-delete (on the unwrapped repository), so it must be listed here
+// or checking a habit off never scheduled a sync.
+const MUTATING_METHODS = new Set(["create", "update", "softDelete", "toggle"]);
 
 /**
- * Wraps a repository so every local write (create/update/softDelete)
+ * Wraps a repository so every local write (create/update/softDelete/toggle)
  * schedules a background sync — screens keep calling these methods exactly
  * as before and get auto-sync for free. Sync-engine-internal writes
  * (findPendingSync/markSynced/applyRemoteChanges/applyRemoteDeletes) are
@@ -52,13 +55,23 @@ export function getConfiguredSupabaseClient(): SupabaseClient {
   return getSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 }
 
+/**
+ * 2 (2026-11-01): pull reads by server_updated_at and pages past the
+ * 1000-row cap. Pulls before that could skip rows for good — anything past
+ * the first 1000 of a full pull, and changes pushed late from an offline
+ * device — so a device still on format 1 pulls everything once.
+ */
+const SYNC_FORMAT = 2;
+
 let syncTimer: ReturnType<typeof setTimeout> | null = null;
 let syncInFlight = false;
+/** A sync was asked for while one was running: run once more when it ends. */
+let syncRequestedDuringFlight = false;
 
 /**
  * Runs one push+pull cycle. Safe to call often and from multiple triggers
  * (login, app foreground, local writes) — `syncInFlight` collapses
- * overlapping calls into one. Failures (offline, transient network errors)
+ * overlapping calls into one follow-up run after the current one. Failures (offline, transient network errors)
  * are swallowed on purpose: local rows stay `syncStatus: 'pending'` either
  * way, so the next trigger retries them — no error banner/retry UI needed
  * (see docs/features.md's "화려한 시각화보다 통계 계산의 신뢰도" principle).
@@ -74,21 +87,31 @@ let syncInFlight = false;
  * keeps the first post-login sync starting from epoch, as intended.
  */
 export async function runSync(): Promise<void> {
-  if (syncInFlight) return;
+  if (syncInFlight) {
+    // Dropping this call lost a write made during the running sync until
+    // the next app foreground: that sync had already read its pending rows.
+    syncRequestedDuringFlight = true;
+    return;
+  }
   syncInFlight = true;
+  syncRequestedDuringFlight = false;
   try {
     const client = getConfiguredSupabaseClient();
     const { data } = await client.auth.getSession();
     if (!data.session) return;
 
     const engine = new SyncEngine(habitRepository, checkInRepository, categoryRepository, new SupabaseSyncGateway(client));
-    const since = useSettingsStore.getState().lastSyncedAt ?? new Date(0).toISOString();
+    const settings = useSettingsStore.getState();
+    const watermark = settings.syncFormat === SYNC_FORMAT ? settings.lastSyncedAt : null;
+    const since = watermark ?? new Date(0).toISOString();
     const result = await engine.syncNow(since);
     useSettingsStore.getState().setLastSyncedAt(result.serverTime);
+    useSettingsStore.getState().setSyncFormat(SYNC_FORMAT);
   } catch {
     // Offline or transient failure — retried on the next trigger.
   } finally {
     syncInFlight = false;
+    if (syncRequestedDuringFlight) scheduleSync(0);
   }
 }
 

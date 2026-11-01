@@ -19,14 +19,15 @@ import {
   startOfMonth,
   startOfWeek,
   startOfYear,
-  subDays,
+  parseISO,
   subMonths,
   subWeeks,
   subYears,
 } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import type { Category, CheckIn, Habit } from '@habit-tracker/core';
-import { calculateStreak, getPeriodCounts } from '@habit-tracker/core';
+import { calculateStreak, getCompletionRate, getPeriodCounts } from '@habit-tracker/core';
+import { useTodayDate } from '@/hooks/use-today-date';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
@@ -79,7 +80,7 @@ export default function StatsScreen() {
   useEffect(() => categoryRepository.observe().subscribe(setCategories), []);
   useEffect(() => checkInRepository.observeAll().subscribe(setAllCheckIns), []);
 
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = useTodayDate();
 
   const checkedByHabit = useMemo(() => {
     const map = new Map<string, Set<string>>();
@@ -99,13 +100,22 @@ export default function StatsScreen() {
   );
 
   const stats: HabitStat[] = useMemo(() => {
-    const rangeStart = format(subDays(new Date(), LOOKBACK_DAYS), 'yyyy-MM-dd');
     return habits.map((habit) => {
-      const dates = allCheckIns
-        .filter((checkIn) => checkIn.habitId === habit.id && checkIn.date >= rangeStart)
-        .map((checkIn) => checkIn.date);
+      // Streaks over the whole history (same as the Today card and the
+      // detail screen); the completion rate over the last LOOKBACK_DAYS,
+      // measured against what the habit's frequency asks for.
+      const dates = allCheckIns.filter((checkIn) => checkIn.habitId === habit.id).map((checkIn) => checkIn.date);
       const { current, longest } = calculateStreak(dates, today, habit.frequencyType, habit.frequencyConfig);
-      const completionRate = Math.round((dates.length / LOOKBACK_DAYS) * 100);
+      const createdOn = format(parseISO(habit.createdAt), 'yyyy-MM-dd');
+      const startedOn = dates.reduce((min, date) => (date < min ? date : min), createdOn);
+      const completionRate = getCompletionRate(
+        dates,
+        today,
+        LOOKBACK_DAYS,
+        habit.frequencyType,
+        habit.frequencyConfig,
+        startedOn,
+      );
       return { habit, currentStreak: current, longestStreak: longest, completionRate };
     });
   }, [habits, allCheckIns, today]);

@@ -1,4 +1,5 @@
 import type {
+  PushedRow,
   Category,
   CategoryRepository,
   CreateCategoryInput,
@@ -91,11 +92,11 @@ export class LocalCategoryRepository implements CategoryRepository {
     return rows.map(toCategory);
   }
 
-  async markSynced(ids: readonly string[], _syncedAt: string): Promise<void> {
+  async markSynced(rows: readonly PushedRow[], _syncedAt: string): Promise<void> {
     const db = await getWebDb();
-    for (const id of ids) {
+    for (const { id, version } of rows) {
       const existing = await db.get("categories", id);
-      if (existing) await db.put("categories", { ...existing, syncStatus: "synced" });
+      if (existing && existing.version === version) await db.put("categories", { ...existing, syncStatus: "synced" });
     }
   }
 

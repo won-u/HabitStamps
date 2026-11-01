@@ -1,4 +1,11 @@
-import type { CategoryRepository, CheckInRepository, HabitRepository, SyncChangeSet, SyncGateway } from "@habit-tracker/core";
+import type {
+  CategoryRepository,
+  CheckInRepository,
+  HabitRepository,
+  PushedRow,
+  SyncChangeSet,
+  SyncGateway,
+} from "@habit-tracker/core";
 
 export interface SyncSummary {
   pushedHabits: number;
@@ -46,12 +53,17 @@ export class SyncEngine {
     const failedIds = new Set(pushResult.failedIds);
     const notPushed = (id: string) => conflictIds.has(id) || failedIds.has(id);
 
-    const pushedHabitIds = pendingHabits.map((h) => h.id).filter((id) => !notPushed(id));
-    const pushedCheckInIds = pendingCheckIns.map((c) => c.id).filter((id) => !notPushed(id));
-    const pushedCategoryIds = pendingCategories.map((c) => c.id).filter((id) => !notPushed(id));
-    await this.habitRepository.markSynced(pushedHabitIds, pushResult.acceptedAt);
-    await this.checkInRepository.markSynced(pushedCheckInIds, pushResult.acceptedAt);
-    await this.categoryRepository.markSynced(pushedCategoryIds, pushResult.acceptedAt);
+    // The version each row had when it was read for this push: markSynced
+    // leaves a row pending if it was written again while the push was in
+    // flight (see the interface doc).
+    const pushed = (rows: readonly PushedRow[]) =>
+      rows.filter((row) => !notPushed(row.id)).map(({ id, version }) => ({ id, version }));
+    const pushedHabits = pushed(pendingHabits);
+    const pushedCheckIns = pushed(pendingCheckIns);
+    const pushedCategories = pushed(pendingCategories);
+    await this.habitRepository.markSynced(pushedHabits, pushResult.acceptedAt);
+    await this.checkInRepository.markSynced(pushedCheckIns, pushResult.acceptedAt);
+    await this.categoryRepository.markSynced(pushedCategories, pushResult.acceptedAt);
 
     const pullResult = await this.gateway.pull(sinceIso);
     const { habits, checkIns, categories } = pullResult.changes;
@@ -68,9 +80,9 @@ export class SyncEngine {
     await this.checkInRepository.applyRemoteDeletes(checkIns.deletedIds);
 
     return {
-      pushedHabits: pushedHabitIds.length,
-      pushedCheckIns: pushedCheckInIds.length,
-      pushedCategories: pushedCategoryIds.length,
+      pushedHabits: pushedHabits.length,
+      pushedCheckIns: pushedCheckIns.length,
+      pushedCategories: pushedCategories.length,
       pulledHabits: habits.created.length + habits.updated.length,
       pulledCheckIns: checkIns.created.length + checkIns.updated.length,
       pulledCategories: categories.created.length + categories.updated.length,

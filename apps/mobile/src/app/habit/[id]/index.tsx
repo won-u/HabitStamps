@@ -11,7 +11,6 @@ import {
   isSameMonth,
   startOfMonth,
   startOfWeek,
-  subDays,
 } from 'date-fns';
 import { ko } from 'date-fns/locale';
 import type { CheckIn, Habit, StreakRange } from '@habit-tracker/core';
@@ -26,13 +25,13 @@ import { DenimCard } from '@/components/denim-card';
 import { habitRepository, checkInRepository } from '@/composition/container';
 import { PressableScale } from '@/components/ui/pressable-scale';
 import { JumpToTodayButton } from '@/components/ui/jump-to-today-button';
+import { useTodayDate } from '@/hooks/use-today-date';
 import { useBottomInset } from '@/hooks/use-bottom-inset';
 import { useCountUp } from '@/hooks/use-count-up';
 import { tintedShadow } from '@/constants/theme';
 import { haptic } from '@/lib/haptics';
 
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
-const STREAK_LOOKBACK_DAYS = 400;
 const SCREEN_PADDING = 20;
 const CARD_HORIZONTAL_PADDING = 16;
 const MAX_WEEK_ROWS = 6;
@@ -74,7 +73,7 @@ export default function HabitDetailScreen() {
 
   useEffect(() => checkInRepository.observeByHabit(id).subscribe(setCheckIns), [id]);
 
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const today = useTodayDate();
   const checkedDates = useMemo(() => new Set(checkIns.map((checkIn) => checkIn.date)), [checkIns]);
   const washedDates = useMemo(
     () => new Set(checkIns.filter((checkIn) => checkIn.washed).map((checkIn) => checkIn.date)),
@@ -85,9 +84,7 @@ export default function HabitDetailScreen() {
 
   const { current, longest, currentRange, longestRange } = useMemo(() => {
     if (!habit) return { current: 0, longest: 0, currentRange: null, longestRange: null };
-    const rangeStart = format(subDays(new Date(today), STREAK_LOOKBACK_DAYS), 'yyyy-MM-dd');
-    const dates = [...checkedDates].filter((date) => date >= rangeStart);
-    return calculateStreak(dates, today, habit.frequencyType, habit.frequencyConfig);
+    return calculateStreak([...checkedDates], today, habit.frequencyType, habit.frequencyConfig);
   }, [checkedDates, today, habit]);
 
   const isCurrentStreakRecord = current > 0 && current === longest;
@@ -97,8 +94,6 @@ export default function HabitDetailScreen() {
     return [...checkedDates].filter((date) => date.startsWith(monthPrefix)).length;
   }, [checkedDates, month]);
 
-  // Unlike the streak calc above, "전체" (all-time) must not be capped by
-  // STREAK_LOOKBACK_DAYS — it counts every check-in this habit has ever had.
   const periodCounts = useMemo(() => getPeriodCounts([...checkedDates], today), [checkedDates, today]);
 
   const containerWidth = windowWidth - SCREEN_PADDING * 2 - CARD_HORIZONTAL_PADDING * 2;

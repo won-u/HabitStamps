@@ -1,4 +1,5 @@
 import type {
+  PushedRow,
   CheckIn,
   CheckInRepository,
   CreateCheckInInput,
@@ -162,11 +163,11 @@ export class LocalCheckInRepository implements CheckInRepository {
     return rows.map(toCheckIn);
   }
 
-  async markSynced(ids: readonly string[], _syncedAt: string): Promise<void> {
+  async markSynced(rows: readonly PushedRow[], _syncedAt: string): Promise<void> {
     const db = await getWebDb();
-    for (const id of ids) {
+    for (const { id, version } of rows) {
       const existing = await db.get("check_ins", id);
-      if (existing) await db.put("check_ins", { ...existing, syncStatus: "synced" });
+      if (existing && existing.version === version) await db.put("check_ins", { ...existing, syncStatus: "synced" });
     }
   }
 

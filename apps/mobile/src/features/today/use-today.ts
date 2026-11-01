@@ -1,14 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { differenceInCalendarDays, format, startOfMonth, startOfWeek, subDays } from 'date-fns';
+import { differenceInCalendarDays, format, parseISO, startOfMonth, startOfWeek } from 'date-fns';
 import type { CheckIn, FrequencyConfig, FrequencyType, Habit } from '@habit-tracker/core';
 import { calculateStreak } from '@habit-tracker/core';
 import { habitRepository, checkInRepository } from '@/composition/container';
+import { useTodayDate } from '@/hooks/use-today-date';
 
-const STREAK_LOOKBACK_DAYS = 120;
-
-export function todayDateString(): string {
-  return format(new Date(), 'yyyy-MM-dd');
-}
 
 /** A "월 n회" habit tracks against the calendar month; every other frequency tracks against the calendar week. */
 function isMonthlyFrequency(frequencyType: FrequencyType): boolean {
@@ -25,7 +21,7 @@ function periodTarget(frequencyType: FrequencyType, frequencyConfig: FrequencyCo
 function buildSubtitle(today: string, lastCheckInDate: string | null): string {
   if (!lastCheckInDate) return '체크인 없음';
   if (lastCheckInDate === today) return '최근 오늘';
-  const daysAgo = differenceInCalendarDays(new Date(today), new Date(lastCheckInDate));
+  const daysAgo = differenceInCalendarDays(parseISO(today), parseISO(lastCheckInDate));
   if (daysAgo === 1) return '최근 어제';
   if (daysAgo < 30) return `최근 ${daysAgo}일 전`;
   if (daysAgo < 365) return `최근 ${Math.floor(daysAgo / 30)}개월 전`;
@@ -53,8 +49,15 @@ export interface TodayHabit {
  * hook (e.g. from the Calendar or habit detail screen).
  */
 export function useToday() {
-  const today = useMemo(() => todayDateString(), []);
+  const today = useTodayDate();
   const [viewedDate, setViewedDate] = useState(today);
+  // When the day rolls over, a screen that was showing "today" moves on with
+  // it; a deliberately picked other day stays put.
+  const [prevToday, setPrevToday] = useState(today);
+  if (prevToday !== today) {
+    setPrevToday(today);
+    if (viewedDate === prevToday) setViewedDate(today);
+  }
   const [habits, setHabits] = useState<readonly Habit[]>([]);
   const [allCheckIns, setAllCheckIns] = useState<readonly CheckIn[]>([]);
 
@@ -72,17 +75,16 @@ export function useToday() {
   }, [allCheckIns]);
 
   const items: TodayHabit[] = useMemo(() => {
-    const rangeStart = format(subDays(new Date(today), STREAK_LOOKBACK_DAYS), 'yyyy-MM-dd');
-    const weekStart = format(startOfWeek(new Date(today), { weekStartsOn: 0 }), 'yyyy-MM-dd');
-    const monthStart = format(startOfMonth(new Date(today)), 'yyyy-MM-dd');
+    const weekStart = format(startOfWeek(parseISO(today), { weekStartsOn: 0 }), 'yyyy-MM-dd');
+    const monthStart = format(startOfMonth(parseISO(today)), 'yyyy-MM-dd');
 
     return habits.map((habit) => {
       const habitCheckIns = checkInsByHabit.get(habit.id) ?? [];
       const isCheckedForViewedDate = habitCheckIns.some((checkIn) => checkIn.date === viewedDate);
-      const datesInRange = habitCheckIns
-        .map((checkIn) => checkIn.date)
-        .filter((date) => date >= rangeStart)
-        .sort();
+      // All of the habit's history, like the detail and stats screens — a
+      // lookback window cut long streaks short and made the three screens
+      // disagree.
+      const datesInRange = habitCheckIns.map((checkIn) => checkIn.date).sort();
       const { current } = calculateStreak(datesInRange, today, habit.frequencyType, habit.frequencyConfig);
       const lastDate = datesInRange.length > 0 ? datesInRange[datesInRange.length - 1]! : null;
       const periodStart = isMonthlyFrequency(habit.frequencyType) ? monthStart : weekStart;

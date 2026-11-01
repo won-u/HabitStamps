@@ -2,8 +2,9 @@ import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { Redirect } from 'expo-router';
 
-import { getConfiguredSupabaseClient } from '@/composition/container';
+import { getConfiguredSupabaseClient, runSync } from '@/composition/container';
 import { completeWebRedirectSignIn } from '@/data/supabase/auth';
+import { useSettingsStore } from '@/state/settings-store';
 
 /**
  * Target of the OAuth redirect (`Linking.createURL("auth-callback")` in
@@ -23,7 +24,17 @@ import { completeWebRedirectSignIn } from '@/data/supabase/auth';
 export default function AuthCallbackScreen() {
   useEffect(() => {
     if (Platform.OS !== 'web') return;
-    void completeWebRedirectSignIn(getConfiguredSupabaseClient());
+    // Same follow-up as settings.tsx's handleGoogleSignIn (full resync from
+    // scratch, then push this device's local data) — this redirect path is
+    // the one the installed PWA takes, and it used to stop at setSession, so
+    // nothing synced until the app was next brought back to the foreground.
+    void completeWebRedirectSignIn(getConfiguredSupabaseClient())
+      .then((signedIn) => {
+        if (!signedIn) return;
+        useSettingsStore.getState().setLastSyncedAt(null);
+        void runSync();
+      })
+      .catch(() => undefined);
   }, []);
 
   return <Redirect href="/(tabs)" />;
